@@ -41,15 +41,25 @@ def default_root() -> Path:
     return (docs if docs.exists() else Path.home()) / "ISRO_SkillTest"
 
 
-def new_attempt_folder(label: str) -> Path:
-    stamp = datetime.now().strftime("%Y-%m-%d_%H%M")
-    safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in label)
-    f = default_root() / f"{stamp}_{safe}"
-    n = 2
-    while f.exists():
-        f = default_root() / f"{stamp}_{safe}_{n}"
-        n += 1
-    return f
+def safe_name(label: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in " -_" else "-" for ch in label).strip()
+
+
+def new_attempt_folder(label: str):
+    """Each test gets its own folder; every retake is a new 'Attempt N' inside it.
+    Returns (folder, attempt_number)."""
+    base = default_root() / safe_name(label)
+    base.mkdir(parents=True, exist_ok=True)
+    nums = []
+    for p in base.iterdir():
+        if p.is_dir() and p.name.startswith("Attempt "):
+            try:
+                nums.append(int(p.name.split()[1]))
+            except (IndexError, ValueError):
+                pass
+    n = max(nums, default=0) + 1
+    stamp = datetime.now().strftime("%d-%m-%Y %H.%M")
+    return base / f"Attempt {n} ({stamp})", n
 
 
 def prepare_folder(folder: Path, tasks):
@@ -84,7 +94,7 @@ def save_attempt(record: dict):
     history_path().write_text(json.dumps(h, indent=1, ensure_ascii=False), encoding="utf-8")
 
 
-def make_record(mode, title, folder, results, seconds_used, seconds_allowed, app_seconds, events):
+def make_record(mode, title, folder, results, seconds_used, seconds_allowed, app_seconds, events, spec=None, attempt=1):
     by_app = {}
     for r in results:
         a = by_app.setdefault(r.app, [0.0, 0.0])
@@ -94,6 +104,8 @@ def make_record(mode, title, folder, results, seconds_used, seconds_allowed, app
         "when": datetime.now().isoformat(timespec="seconds"),
         "mode": mode,
         "title": title,
+        "spec": spec or {},
+        "attempt": attempt,
         "folder": str(folder),
         "score": round(sum(r.got for r in results), 2),
         "out_of": round(sum(r.marks for r in results), 2),
@@ -104,6 +116,28 @@ def make_record(mode, title, folder, results, seconds_used, seconds_allowed, app
         "results": [r.to_dict() for r in results],
         "events": events[-500:],
     }
+
+
+def delete_attempt(record: dict, delete_files=True):
+    """Remove one attempt from history (matched by time and title) and, if asked, its folder."""
+    import shutil
+    h = [r for r in load_history() if not (r.get("when") == record.get("when") and r.get("title") == record.get("title"))]
+    history_path().write_text(json.dumps(h, indent=1, ensure_ascii=False), encoding="utf-8")
+    folder = record.get("folder")
+    if delete_files and folder and Path(folder).exists() and default_root() in Path(folder).parents:
+        shutil.rmtree(folder, ignore_errors=True)
+        parent = Path(folder).parent
+        if parent != default_root() and parent.exists() and not any(parent.iterdir()):
+            parent.rmdir()
+
+
+def stats(history):
+    tests = [r for r in history if r.get("mode") != "Shortcut quiz"]
+    if not tests:
+        return None
+    pct = [r["score"] / r["out_of"] * 100 for r in tests if r.get("out_of")]
+    return {"count": len(tests), "best": max(pct) if pct else 0, "last": pct[-1] if pct else 0,
+            "avg": sum(pct) / len(pct) if pct else 0}
 
 
 def weak_topics(history, limit=12):

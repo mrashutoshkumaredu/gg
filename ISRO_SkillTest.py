@@ -11,6 +11,7 @@ def selftest(out_path):
     from pathlib import Path
     lines = []
     try:
+        import skilltest.gui  # noqa: F401  (makes sure the window code and its theme files are bundled)
         from pptx import Presentation
         from skilltest.content import PAPERS
         from skilltest.content.drills import DRILLS

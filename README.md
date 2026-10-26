@@ -26,8 +26,9 @@ file is not signed.
 
 ## How a test works
 
-1. Choose a test. A new test folder is made in `Documents\ISRO_SkillTest` and opened for you. Any starter
-   files and a `Pictures` folder are put in it.
+1. Choose a test. A folder is made for it in `Documents\ISRO_SkillTest`, for example
+   `Mock Test 1 - Full Test\Attempt 1 (26-10-2026 18.15)`, and opened for you. Any starter files and a
+   `Pictures` folder are put in it.
 2. Read each task in the app and do it in Office. Save each file in the test folder with the exact name asked.
 3. While the test runs, the app records:
    - which Office program is open and how long you spend in each one
@@ -37,6 +38,12 @@ file is not signed.
 4. The timer warns you at 10, 5 and 1 minute left, and submits the test by itself when time runs out.
 5. After you submit, the app checks your files and shows the result. A printable report
    (`Result_Report.html`) with the full activity timeline is saved in the test folder.
+
+## Retaking a test
+
+Every retake makes a new `Attempt` folder inside the same test folder (Attempt 1, Attempt 2 …), so your old
+work and score are kept for comparison. Use **Retake this test** on the result screen, or open
+**My progress & retakes** to retake, open or delete any past attempt. Deleting an attempt also removes its folder.
 
 ## Run from source (optional)
 

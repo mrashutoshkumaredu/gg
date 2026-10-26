@@ -1,4 +1,4 @@
-"""Desktop window (tkinter)."""
+"""Desktop window (customtkinter, clean light look)."""
 from __future__ import annotations
 
 import os
@@ -10,21 +10,79 @@ import tkinter as tk
 import webbrowser
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
-from tkinter.scrolledtext import ScrolledText
+
+import customtkinter as ctk
 
 from . import __version__
 from .content import PAPERS
 from .content.drills import DRILLS
-from .core import APP_LABEL, grade_task, grade_tasks, all_file_names
+from .core import APP_LABEL, all_file_names, grade_task, grade_tasks
 from .monitor import APP_NAME, Monitor
 from .report import build as build_report
-from .session import (default_root, fmt_secs, load_history, load_settings, make_record, new_attempt_folder,
-                      prepare_folder, save_attempt, save_settings, weak_topics)
+from .session import (default_root, delete_attempt, fmt_secs, load_history, load_settings, make_record,
+                      new_attempt_folder, prepare_folder, save_attempt, save_settings, stats, weak_topics)
 from .shortcuts import make_quiz
 
 APP_TITLE = "ISRO Skill Test Practice"
 SECTION_MIN = {"word": 26, "excel": 26, "ppt": 23}
-OK, BAD = "#1a7f37", "#c62828"
+
+# ---------------------------------------------------------------- look
+NAVY, NAVY_DARK, NAVY_SOFT = "#0B3D91", "#082B66", "#E8EEF9"
+SAFFRON, SAFFRON_DARK = "#FF9933", "#E67E10"
+BG, CARD, INK, MUTED, LINE = "#F3F5F9", "#FFFFFF", "#1D2433", "#5B6475", "#E3E7EF"
+OK, OK_SOFT, BAD, BAD_SOFT = "#1A7F37", "#E6F4EA", "#C62828", "#FDECEC"
+APP_COL = {"word": "#2B579A", "excel": "#217346", "ppt": "#C43E1C"}
+APP_SHORT = {"word": "Word", "excel": "Excel", "ppt": "PowerPoint"}
+FAMILY = "Segoe UI" if sys.platform == "win32" else "DejaVu Sans"
+MONO = "Consolas" if sys.platform == "win32" else "DejaVu Sans Mono"
+
+
+def F(size=13, weight="normal"):
+    return ctk.CTkFont(family=FAMILY, size=size, weight=weight)
+
+
+def card(parent, **kw):
+    kw.setdefault("fg_color", CARD)
+    kw.setdefault("corner_radius", 14)
+    kw.setdefault("border_width", 1)
+    kw.setdefault("border_color", LINE)
+    return ctk.CTkFrame(parent, **kw)
+
+
+def btn(parent, text, command, kind="primary", **kw):
+    styles = {
+        "primary": dict(fg_color=NAVY, hover_color=NAVY_DARK, text_color="white"),
+        "accent": dict(fg_color=SAFFRON, hover_color=SAFFRON_DARK, text_color="#1D1300"),
+        "ghost": dict(fg_color=CARD, hover_color=NAVY_SOFT, text_color=NAVY, border_width=1, border_color="#C9D3E6"),
+        "danger": dict(fg_color=CARD, hover_color=BAD_SOFT, text_color=BAD, border_width=1, border_color="#EBC4C4"),
+    }
+    kw.setdefault("height", 38)
+    kw.setdefault("corner_radius", 10)
+    kw.setdefault("font", F(13, "bold"))
+    return ctk.CTkButton(parent, text=text, command=command, **styles[kind], **kw)
+
+
+def label(parent, text, size=13, weight="normal", color=INK, **kw):
+    return ctk.CTkLabel(parent, text=text, font=F(size, weight), text_color=color, **kw)
+
+
+def pill(parent, text, fg, color="white", size=12, **kw):
+    return ctk.CTkLabel(parent, text=f"  {text}  ", font=F(size, "bold"), fg_color=fg, text_color=color,
+                        corner_radius=10, height=24, **kw)
+
+
+def option(parent, values, width=200):
+    m = ctk.CTkOptionMenu(parent, values=values, width=width, height=36, corner_radius=10, font=F(13),
+                          fg_color=NAVY_SOFT, button_color="#C9D6EE", button_hover_color="#B6C7E6",
+                          text_color=INK, dropdown_font=F(13))
+    m.set(values[0])
+    return m
+
+
+def textbox(parent, height=200, mono=False, size=14):
+    t = ctk.CTkTextbox(parent, height=height, wrap="word", corner_radius=10, border_width=0, fg_color=CARD,
+                       text_color=INK, font=ctk.CTkFont(family=MONO if mono else FAMILY, size=size))
+    return t
 
 
 def open_path(p):
@@ -40,118 +98,166 @@ def open_path(p):
         messagebox.showerror(APP_TITLE, f"Could not open {p}\n{e}")
 
 
-class App(tk.Tk):
+def style_tree():
+    s = ttk.Style()
+    if "clam" in s.theme_names():
+        s.theme_use("clam")
+    s.configure("Nice.Treeview", background=CARD, fieldbackground=CARD, foreground=INK, rowheight=32,
+                font=(FAMILY, 11), borderwidth=0, relief="flat")
+    s.configure("Nice.Treeview.Heading", background="#EEF2FA", foreground=MUTED, font=(FAMILY, 10, "bold"),
+                relief="flat", padding=(8, 6))
+    s.map("Nice.Treeview", background=[("selected", "#DCE6F7")], foreground=[("selected", INK)])
+    s.map("Nice.Treeview.Heading", background=[("active", "#E2E8F5")])
+    s.layout("Nice.Treeview", [("Nice.Treeview.treearea", {"sticky": "nswe"})])
+    s.configure("Vertical.TScrollbar", background="#D5DBE7", troughcolor=CARD, borderwidth=0, arrowsize=12)
+
+
+# =================================================================== app
+
+class App(ctk.CTk):
     def __init__(self):
-        super().__init__()
+        ctk.set_appearance_mode("light")
+        super().__init__(fg_color=BG)
         self.title(f"{APP_TITLE}  v{__version__}")
-        self.geometry("1000x720")
-        self.minsize(760, 560)
-        style = ttk.Style(self)
-        if "vista" in style.theme_names():
-            style.theme_use("vista")
-        elif "clam" in style.theme_names():
-            style.theme_use("clam")
-        style.configure("H1.TLabel", font=("Segoe UI", 18, "bold"))
-        style.configure("H2.TLabel", font=("Segoe UI", 12, "bold"))
-        style.configure("Muted.TLabel", foreground="#5b6475")
-        style.configure("Timer.TLabel", font=("Consolas", 22, "bold"))
-        style.configure("Big.TButton", font=("Segoe UI", 11, "bold"), padding=6)
+        self.geometry("1180x780")
+        self.minsize(980, 660)
+        style_tree()
+
+        head = ctk.CTkFrame(self, fg_color=NAVY, corner_radius=0, height=64)
+        head.pack(fill="x")
+        head.pack_propagate(False)
+        logo = ctk.CTkLabel(head, text="◉", font=F(26, "bold"), text_color=SAFFRON)
+        logo.pack(side="left", padx=(20, 8))
+        box = ctk.CTkFrame(head, fg_color="transparent")
+        box.pack(side="left")
+        label(box, APP_TITLE, 18, "bold", "white").pack(anchor="w")
+        label(box, "Skill Test for Assistant / UDC / JPA / Stenographer", 11, color="#C9D6EE").pack(anchor="w")
+        self.head_right = label(head, "Word 35  ·  Excel 35  ·  PowerPoint 30  ·  75 min", 12, color="#C9D6EE")
+        self.head_right.pack(side="right", padx=20)
+        ctk.CTkFrame(self, fg_color=SAFFRON, corner_radius=0, height=4).pack(fill="x")
+
+        self.body = ctk.CTkFrame(self, fg_color=BG, corner_radius=0)
+        self.body.pack(fill="both", expand=True)
         self.frame = None
         self.show_home()
 
-    def switch(self, frame):
+    def switch(self, cls, *args, **kw):
         if self.frame is not None:
             self.frame.destroy()
-        self.frame = frame
-        frame.pack(fill="both", expand=True)
+        self.frame = cls(self.body, self, *args, **kw)
+        self.frame.pack(fill="both", expand=True, padx=20, pady=16)
 
     def show_home(self):
         self.attributes("-topmost", False)
-        self.switch(Home(self))
+        self.switch(Home)
+
+    # one place that knows how to start any kind of test (used by Home, Retake and History)
+    def start(self, spec):
+        kind = spec.get("kind")
+        if kind == "mock":
+            p = next(p for p in PAPERS if p.id == spec["paper"])
+            self.switch(TestView, p.tasks, f"{p.title} - Full Test", p.minutes * 60, "Full mock", False, spec)
+        elif kind == "section":
+            p = next(p for p in PAPERS if p.id == spec["paper"])
+            app = spec["app"]
+            self.switch(TestView, p.section(app), f"{p.title} - {APP_SHORT[app]}", SECTION_MIN[app] * 60,
+                        "Section practice", True, spec)
+        elif kind == "drills":
+            chosen = [d for d in DRILLS if d.id in spec["ids"]]
+            title = "Drill " + chosen[0].id if len(chosen) == 1 else f"Drills ({len(chosen)})"
+            self.switch(TestView, chosen, title, sum(d.minutes for d in chosen) * 60, "Topic drills", True, spec,
+                        show_hints=True)
+        else:
+            messagebox.showinfo(APP_TITLE, "This attempt was made with an older version and cannot be retaken "
+                                           "automatically. Start it again from the Home screen.")
 
 
 # =================================================================== home
 
-class Home(ttk.Frame):
-    def __init__(self, app: App):
-        super().__init__(app, padding=18)
+class Home(ctk.CTkFrame):
+    def __init__(self, parent, app: App):
+        super().__init__(parent, fg_color="transparent")
         self.app = app
-        ttk.Label(self, text=APP_TITLE, style="H1.TLabel").pack(anchor="w")
-        ttk.Label(self, text="Skill Test (on Computer) for Assistant / UDC / JPA / Stenographer – "
-                             "MS Word 35 + MS Excel 35 + MS PowerPoint 30 marks, 75 minutes",
-                  style="Muted.TLabel").pack(anchor="w", pady=(0, 12))
-
-        grid = ttk.Frame(self)
-        grid.pack(fill="both", expand=True)
-        grid.columnconfigure(0, weight=1)
-        grid.columnconfigure(1, weight=1)
         names = [p.title for p in PAPERS]
 
-        # full mock
-        f = ttk.LabelFrame(grid, text="  Full Mock Test  ", padding=12)
-        f.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
-        ttk.Label(f, text="All three sections, 75 minutes, marked out of 100.\nWork is checked after you submit.",
-                  justify="left").pack(anchor="w")
-        self.mock = ttk.Combobox(f, values=names, state="readonly", width=22)
-        self.mock.current(0)
-        self.mock.pack(anchor="w", pady=8)
-        ttk.Button(f, text="Start Full Mock (75 min)", style="Big.TButton", command=self.start_mock).pack(anchor="w")
+        # stats strip
+        st = stats(load_history())
+        strip = ctk.CTkFrame(self, fg_color="transparent")
+        strip.pack(fill="x", pady=(0, 14))
+        items = ([("Tests taken", f"{st['count']}"), ("Best score", f"{st['best']:.0f}%"),
+                  ("Last score", f"{st['last']:.0f}%"), ("Average", f"{st['avg']:.0f}%")] if st else
+                 [("Welcome!", "Start with Mock Test 1"), ("Format", "Word · Excel · PowerPoint"),
+                  ("Duration", "75 minutes"), ("Total", "100 marks")])
+        for i, (k, v) in enumerate(items):
+            c = card(strip)
+            c.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 8, 0))
+            strip.grid_columnconfigure(i, weight=1)
+            label(c, k, 12, color=MUTED).pack(anchor="w", padx=16, pady=(12, 0))
+            label(c, v, 20 if st else 15, "bold", NAVY).pack(anchor="w", padx=16, pady=(0, 12))
 
-        # section practice
-        f = ttk.LabelFrame(grid, text="  Section Practice  ", padding=12)
-        f.grid(row=0, column=1, sticky="nsew", padx=6, pady=6)
-        ttk.Label(f, text="One section of a mock with a shorter timer.\nYou can check each task as you go.",
-                  justify="left").pack(anchor="w")
-        row = ttk.Frame(f)
-        row.pack(anchor="w", pady=8)
-        self.sec_paper = ttk.Combobox(row, values=names, state="readonly", width=14)
-        self.sec_paper.current(0)
+        grid = ctk.CTkFrame(self, fg_color="transparent")
+        grid.pack(fill="both", expand=True)
+        for i in (0, 1):
+            grid.grid_columnconfigure(i, weight=1, uniform="c")
+            grid.grid_rowconfigure(i, weight=1, uniform="r")
+
+        c = self.mode_card(grid, 0, 0, "★", NAVY, "Full Mock Test",
+                           "All three sections in 75 minutes, marked out of 100.\nYour work is checked after you submit.")
+        self.mock = option(c.controls, names)
+        self.mock.pack(side="left")
+        btn(c.controls, "Start full mock", self.start_mock, "accent", width=170).pack(side="right")
+
+        c = self.mode_card(grid, 0, 1, "◎", APP_COL["excel"], "Section Practice",
+                           "Only Word, Excel or PowerPoint, with a shorter timer.\nCheck each task as you go.")
+        self.sec_paper = option(c.controls, names, 140)
         self.sec_paper.pack(side="left")
-        self.sec_app = ttk.Combobox(row, values=["MS Word", "MS Excel", "MS PowerPoint"], state="readonly", width=14)
-        self.sec_app.current(0)
-        self.sec_app.pack(side="left", padx=6)
-        ttk.Button(f, text="Start Section", style="Big.TButton", command=self.start_section).pack(anchor="w")
+        self.sec_app = option(c.controls, ["Word", "Excel", "PowerPoint"], 130)
+        self.sec_app.pack(side="left", padx=8)
+        btn(c.controls, "Start", self.start_section, width=100).pack(side="right")
 
-        # drills
-        f = ttk.LabelFrame(grid, text="  Topic Drills  ", padding=12)
-        f.grid(row=1, column=0, sticky="nsew", padx=6, pady=6)
-        ttk.Label(f, text=f"{len(DRILLS)} short tasks, one syllabus topic each\n(Mail Merge, VLOOKUP, Subtotal, Slide Master…).",
-                  justify="left").pack(anchor="w")
-        ttk.Button(f, text="Choose Drills", style="Big.TButton", command=lambda: app.switch(DrillPicker(app))).pack(anchor="w", pady=8)
+        c = self.mode_card(grid, 1, 0, "✎", APP_COL["ppt"], "Topic Drills",
+                           f"{len(DRILLS)} short tasks, one syllabus topic each: Mail Merge,\nVLOOKUP, Subtotal, Slide Master and more.")
+        btn(c.controls, "Choose drills", lambda: app.switch(DrillPicker), width=170).pack(side="right")
 
-        # quiz
-        f = ttk.LabelFrame(grid, text="  Shortcut Key Quiz  ", padding=12)
-        f.grid(row=1, column=1, sticky="nsew", padx=6, pady=6)
-        ttk.Label(f, text="20 quick questions on keyboard shortcuts.", justify="left").pack(anchor="w")
-        self.quiz_app = ttk.Combobox(f, values=["All programs", "Word", "Excel", "PowerPoint"], state="readonly", width=16)
-        self.quiz_app.current(0)
-        self.quiz_app.pack(anchor="w", pady=8)
-        ttk.Button(f, text="Start Quiz", style="Big.TButton", command=self.start_quiz).pack(anchor="w")
+        c = self.mode_card(grid, 1, 1, "⌨", APP_COL["word"], "Shortcut Key Quiz",
+                           "20 quick questions on keyboard shortcuts\nfor Word, Excel and PowerPoint.")
+        self.quiz_app = option(c.controls, ["All programs", "Word", "Excel", "PowerPoint"], 160)
+        self.quiz_app.pack(side="left")
+        btn(c.controls, "Start quiz", self.start_quiz, width=130).pack(side="right")
 
-        # bottom bar
-        bar = ttk.Frame(self)
-        bar.pack(fill="x", pady=(12, 0))
-        ttk.Button(bar, text="My Progress / History", command=lambda: app.switch(HistoryView(app))).pack(side="left")
-        ttk.Button(bar, text="How it works", command=self.help).pack(side="left", padx=6)
-        self.root_lbl = ttk.Label(bar, text=f"Test files are kept in: {default_root()}", style="Muted.TLabel")
-        self.root_lbl.pack(side="left", padx=12)
-        ttk.Button(bar, text="Change…", command=self.change_root).pack(side="left")
+        bar = ctk.CTkFrame(self, fg_color="transparent")
+        bar.pack(fill="x", pady=(14, 0))
+        btn(bar, "My progress & retakes", lambda: app.switch(HistoryView), "ghost", width=200).pack(side="left")
+        btn(bar, "How it works", self.help, "ghost", width=130).pack(side="left", padx=8)
+        btn(bar, "Change", self.change_root, "ghost", width=90).pack(side="right")
+        self.root_lbl = label(bar, f"Test folders: {default_root()}", 12, color=MUTED)
+        self.root_lbl.pack(side="right", padx=10)
+
+    def mode_card(self, grid, r, c, icon, colour, title, desc):
+        k = card(grid)
+        k.grid(row=r, column=c, sticky="nsew", padx=(0 if c == 0 else 8, 0 if c else 8), pady=(0 if r == 0 else 8, 0 if r else 8))
+        top = ctk.CTkFrame(k, fg_color="transparent")
+        top.pack(fill="x", padx=20, pady=(18, 6))
+        ctk.CTkLabel(top, text=icon, width=44, height=44, corner_radius=22, fg_color=colour, text_color="white",
+                     font=F(20, "bold")).pack(side="left")
+        label(top, title, 18, "bold").pack(side="left", padx=12)
+        label(k, desc, 13, color=MUTED, justify="left").pack(anchor="w", padx=20)
+        k.controls = ctk.CTkFrame(k, fg_color="transparent")
+        k.controls.pack(side="bottom", fill="x", padx=20, pady=18)
+        return k
 
     def start_mock(self):
-        p = PAPERS[self.mock.current()]
-        self.app.switch(TestView(self.app, p.tasks, f"{p.title} – Full Test", p.minutes * 60, mode="Full mock",
-                                 allow_check=False))
+        p = PAPERS[[x.title for x in PAPERS].index(self.mock.get())]
+        self.app.start({"kind": "mock", "paper": p.id})
 
     def start_section(self):
-        p = PAPERS[self.sec_paper.current()]
-        app = ["word", "excel", "ppt"][self.sec_app.current()]
-        tasks = p.section(app)
-        self.app.switch(TestView(self.app, tasks, f"{p.title} – {APP_LABEL[app]}", SECTION_MIN[app] * 60,
-                                 mode="Section practice", allow_check=True))
+        p = PAPERS[[x.title for x in PAPERS].index(self.sec_paper.get())]
+        app = {"Word": "word", "Excel": "excel", "PowerPoint": "ppt"}[self.sec_app.get()]
+        self.app.start({"kind": "section", "paper": p.id, "app": app})
 
     def start_quiz(self):
-        app = [None, "Word", "Excel", "PowerPoint"][self.quiz_app.current()]
-        self.app.switch(QuizView(self.app, make_quiz(20, app)))
+        app = {"All programs": None}.get(self.quiz_app.get(), self.quiz_app.get())
+        self.app.switch(QuizView, make_quiz(20, app), app)
 
     def change_root(self):
         d = filedialog.askdirectory(title="Choose where test folders are created", initialdir=str(default_root()))
@@ -159,7 +265,7 @@ class Home(ttk.Frame):
             s = load_settings()
             s["root"] = d
             save_settings(s)
-            self.root_lbl.config(text=f"Test files are kept in: {d}")
+            self.root_lbl.configure(text=f"Test folders: {d}")
 
     def help(self):
         messagebox.showinfo(APP_TITLE, HELP_TEXT)
@@ -167,226 +273,305 @@ class Home(ttk.Frame):
 
 HELP_TEXT = """How it works
 
-1. Pick a test. A new test folder is created and opened for you. Starter files (if any) and a Pictures folder are put in it.
-2. Read each task in this window and do it in the real MS Word / Excel / PowerPoint.
-3. Save every file in the test folder with the EXACT name asked (use .docx / .xlsx / .pptx unless told otherwise).
-4. While you work, the app records what happens: which program is open, files created and saved, formulas typed, slides added, and how long you spend in each program.
-5. Press Submit (or wait for the timer). Save and close your files first.
-6. The app opens your files and checks each point. For every mistake it shows what it found, what was expected and how to do it, plus a step-by-step model answer.
+1. Pick a test. A folder is made for it (e.g. Mock Test 1 - Full Test \\ Attempt 1) and opened for you, with any starter files and a Pictures folder.
+2. Read each task here and do it in the real MS Word / Excel / PowerPoint.
+3. Save every file in that folder with the EXACT name asked.
+4. While you work, the app records which program is open, files created and saved, formulas typed, slides added, and the time you spend in each program.
+5. Press Submit (or let the timer run out). Save your files first.
+6. Each point is marked. For every mistake you see what was found, what was expected and how to do it, plus a model answer.
 
-Tip: keep this window on the right side of the screen with 'Keep on top' ticked, and Office on the left."""
+Retaking a test makes a new 'Attempt' folder, so your old work and score are kept. Use 'My progress & retakes' to retake or delete old attempts.
+
+Tip: tick 'Keep on top' and place this window beside Office."""
 
 
 # =================================================================== drill picker
 
-class DrillPicker(ttk.Frame):
-    def __init__(self, app: App):
-        super().__init__(app, padding=14)
+class DrillPicker(ctk.CTkFrame):
+    def __init__(self, parent, app: App):
+        super().__init__(parent, fg_color="transparent")
         self.app = app
-        ttk.Label(self, text="Topic Drills", style="H1.TLabel").pack(anchor="w")
-        ttk.Label(self, text="Select one or more drills (Ctrl+click), then Start. You can check each one instantly.",
-                  style="Muted.TLabel").pack(anchor="w", pady=(0, 8))
-        cols = ("topic", "mins")
-        self.tree = ttk.Treeview(self, columns=cols, show="tree headings", selectmode="extended")
-        self.tree.heading("#0", text="Drill")
-        self.tree.heading("topic", text="Syllabus topic")
-        self.tree.heading("mins", text="Minutes")
-        self.tree.column("#0", width=380)
-        self.tree.column("topic", width=300)
-        self.tree.column("mins", width=70, anchor="center")
-        self.items = {}
+        top = ctk.CTkFrame(self, fg_color="transparent")
+        top.pack(fill="x")
+        label(top, "Topic Drills", 22, "bold").pack(side="left")
+        self.filter = ctk.CTkSegmentedButton(top, values=["All", "Word", "Excel", "PowerPoint"], command=self.render,
+                                             font=F(13, "bold"), height=36, corner_radius=10, fg_color="#E6EAF2",
+                                             selected_color=SAFFRON, selected_hover_color=SAFFRON_DARK,
+                                             unselected_color="#E6EAF2", unselected_hover_color="#D5DDEC",
+                                             text_color=INK)
+        self.filter.set("All")
+        self.filter.pack(side="right")
+        label(self, "Tick one or more drills and press Start. Each drill can be checked instantly and has a model answer.",
+              13, color=MUTED).pack(anchor="w", pady=(2, 10))
+
+        self.vars = {d.id: tk.BooleanVar(value=False) for d in DRILLS}
+        self.list = ctk.CTkScrollableFrame(self, fg_color=CARD, corner_radius=14, border_width=1, border_color=LINE)
+        self.list.pack(fill="both", expand=True)
+
+        bar = ctk.CTkFrame(self, fg_color="transparent")
+        bar.pack(fill="x", pady=(12, 0))
+        btn(bar, "← Home", app.show_home, "ghost", width=110).pack(side="left")
+        btn(bar, "Start selected", self.start, "accent", width=170).pack(side="right")
+        self.summary = label(bar, "", 13, color=MUTED)
+        self.summary.pack(side="right", padx=14)
+        self.render()
+
+    def render(self, *_):
+        for w in self.list.winfo_children():
+            w.destroy()
+        want = {"All": None, "Word": "word", "Excel": "excel", "PowerPoint": "ppt"}[self.filter.get()]
         for app_key in ("word", "excel", "ppt"):
-            parent = self.tree.insert("", "end", text=APP_LABEL[app_key], open=True)
+            if want and app_key != want:
+                continue
+            h = ctk.CTkFrame(self.list, fg_color="transparent")
+            h.pack(fill="x", padx=10, pady=(12, 4))
+            pill(h, APP_LABEL[app_key], APP_COL[app_key]).pack(side="left")
             for d in DRILLS:
-                if d.app == app_key:
-                    iid = self.tree.insert(parent, "end", text=f"{d.id}  {d.title}", values=(d.topic, d.minutes))
-                    self.items[iid] = d
-        self.tree.pack(fill="both", expand=True)
-        bar = ttk.Frame(self)
-        bar.pack(fill="x", pady=8)
-        ttk.Button(bar, text="← Home", command=app.show_home).pack(side="left")
-        ttk.Button(bar, text="Start selected drills", style="Big.TButton", command=self.start).pack(side="right")
+                if d.app != app_key:
+                    continue
+                row = ctk.CTkFrame(self.list, fg_color="transparent")
+                row.pack(fill="x", padx=14, pady=2)
+                ctk.CTkCheckBox(row, text=d.title, variable=self.vars[d.id], font=F(13), text_color=INK,
+                                fg_color=NAVY, hover_color=NAVY_DARK, border_color="#AEB9CE", corner_radius=6,
+                                command=self.update_summary).pack(side="left")
+                label(row, f"{d.minutes} min", 12, color=MUTED).pack(side="right", padx=8)
+                label(row, d.topic, 12, color=MUTED).pack(side="right", padx=8)
+        self.update_summary()
+
+    def chosen(self):
+        return [d for d in DRILLS if self.vars[d.id].get()]
+
+    def update_summary(self):
+        c = self.chosen()
+        self.summary.configure(text=f"{len(c)} selected · {sum(d.minutes for d in c)} min" if c else "Nothing selected")
 
     def start(self):
-        chosen = [self.items[i] for i in self.tree.selection() if i in self.items]
-        if not chosen:
-            messagebox.showinfo(APP_TITLE, "Select at least one drill first.")
+        c = self.chosen()
+        if not c:
+            messagebox.showinfo(APP_TITLE, "Tick at least one drill first.")
             return
-        mins = sum(d.minutes for d in chosen)
-        self.app.switch(TestView(self.app, chosen, "Topic Drills", mins * 60, mode="Topic drills", allow_check=True,
-                                 show_hints=True))
+        self.app.start({"kind": "drills", "ids": [d.id for d in c]})
 
 
 # =================================================================== test view
 
-class TestView(ttk.Frame):
-    def __init__(self, app: App, tasks, title, seconds, mode, allow_check, show_hints=False):
-        super().__init__(app, padding=10)
+class TaskItem(ctk.CTkFrame):
+    def __init__(self, parent, task, on_click):
+        super().__init__(parent, fg_color=CARD, corner_radius=10, border_width=1, border_color=LINE)
+        self.task = task
+        bar = ctk.CTkFrame(self, fg_color=APP_COL[task.app], width=5, height=36, corner_radius=3)
+        bar.pack(side="left", padx=(8, 10), pady=10)
+        box = ctk.CTkFrame(self, fg_color="transparent")
+        box.pack(side="left", fill="x", expand=True, pady=6)
+        self.l1 = label(box, APP_SHORT[task.app].upper(), 10, "bold", APP_COL[task.app])
+        self.l1.pack(anchor="w")
+        self.l2 = label(box, task.title, 13, "bold")
+        self.l2.pack(anchor="w")
+        self.l3 = label(self, f"{task.marks:g}", 13, "bold", MUTED)
+        self.l3.pack(side="right", padx=12)
+        for w in (self, bar, box, self.l1, self.l2, self.l3):
+            w.bind("<Button-1>", lambda e: on_click(self))
+
+    def select(self, on):
+        self.configure(fg_color=NAVY_SOFT if on else CARD, border_color=NAVY if on else LINE)
+
+
+class TestView(ctk.CTkFrame):
+    def __init__(self, parent, app: App, tasks, title, seconds, mode, allow_check, spec, show_hints=False):
+        super().__init__(parent, fg_color="transparent")
         self.app = app
         self.tasks = tasks
         self.title_ = title
         self.mode = mode
+        self.spec = spec
         self.allowed = seconds
-        self.allow_check = allow_check
-        self.show_hints = show_hints
         self.started = time.monotonic()
         self.warned = set()
         self.done = False
         self.events_q = queue.Queue()
+        self.cur = 0
 
-        self.folder = new_attempt_folder(title)
+        self.folder, self.attempt = new_attempt_folder(title)
         prepare_folder(self.folder, tasks)
         self.known = all_file_names(tasks)
         self.monitor = Monitor(self.folder, on_event=self.events_q.put)
 
-        # top bar
-        top = ttk.Frame(self)
+        # ---- top bar
+        top = card(self)
         top.pack(fill="x")
-        ttk.Label(top, text=title, style="H2.TLabel").pack(side="left")
-        ttk.Button(top, text="Submit test", style="Big.TButton", command=self.submit).pack(side="right")
-        self.timer = ttk.Label(top, text=fmt_secs(seconds), style="Timer.TLabel")
-        self.timer.pack(side="right", padx=16)
+        left = ctk.CTkFrame(top, fg_color="transparent")
+        left.pack(side="left", padx=16, pady=10)
+        row = ctk.CTkFrame(left, fg_color="transparent")
+        row.pack(anchor="w")
+        label(row, title, 18, "bold").pack(side="left")
+        pill(row, f"Attempt {self.attempt}", NAVY_SOFT, NAVY).pack(side="left", padx=10)
+        pill(row, mode, "#FFF1E0", "#9A4D00").pack(side="left")
+        flink = ctk.CTkLabel(left, text=f"Folder: {self.folder}", font=F(11),
+                             text_color=MUTED, cursor="hand2")
+        flink.pack(anchor="w")
+        flink.bind("<Button-1>", lambda e: open_path(self.folder))
+
+        btn(top, "Submit test", self.submit, "accent", width=140, height=44).pack(side="right", padx=(8, 16))
+        self.timer = ctk.CTkLabel(top, text=fmt_secs(seconds), font=ctk.CTkFont(family=MONO, size=26, weight="bold"),
+                                  fg_color=NAVY, text_color="white", corner_radius=10, width=120, height=44)
+        self.timer.pack(side="right", padx=8)
         self.topmost = tk.BooleanVar(value=False)
-        ttk.Checkbutton(top, text="Keep on top", variable=self.topmost,
-                        command=lambda: app.attributes("-topmost", self.topmost.get())).pack(side="right")
+        ctk.CTkSwitch(top, text="Keep on top", variable=self.topmost, font=F(12), progress_color=NAVY,
+                      command=lambda: app.attributes("-topmost", self.topmost.get())).pack(side="right", padx=8)
+        btn(top, "Open folder", lambda: open_path(self.folder), "ghost", width=110).pack(side="right", padx=4)
 
-        info = ttk.Frame(self)
-        info.pack(fill="x", pady=(4, 6))
-        ttk.Label(info, text=f"Test folder: {self.folder}", style="Muted.TLabel").pack(side="left")
-        ttk.Button(info, text="Open test folder", command=lambda: open_path(self.folder)).pack(side="right")
+        # ---- body
+        body = ctk.CTkFrame(self, fg_color="transparent")
+        body.pack(fill="both", expand=True, pady=12)
+        body.grid_columnconfigure(1, weight=1)
+        body.grid_rowconfigure(0, weight=1)
 
-        body = ttk.PanedWindow(self, orient="horizontal")
-        body.pack(fill="both", expand=True)
-        left = ttk.Frame(body)
-        self.tlist = tk.Listbox(left, width=34, activestyle="none", font=("Segoe UI", 10), exportselection=False)
-        for t in tasks:
-            self.tlist.insert("end", f"{APP_LABEL[t.app].replace('MS ', '')} · {t.title}  [{t.marks:g}]")
-        self.tlist.pack(fill="both", expand=True)
-        self.tlist.bind("<<ListboxSelect>>", lambda e: self.show_task())
-        self.sec_lbl = ttk.Label(left, text="", justify="left")
-        self.sec_lbl.pack(anchor="w", pady=4)
-        body.add(left, weight=1)
+        side = ctk.CTkScrollableFrame(body, width=270, fg_color="transparent", label_text="Tasks",
+                                      label_font=F(13, "bold"), label_fg_color="transparent", label_text_color=MUTED)
+        side.grid(row=0, column=0, sticky="nsw", padx=(0, 12))
+        self.items = []
+        for i, t in enumerate(tasks):
+            it = TaskItem(side, t, self.pick)
+            it.pack(fill="x", pady=4, padx=2)
+            self.items.append(it)
 
-        right = ttk.Frame(body)
-        self.text = ScrolledText(right, wrap="word", font=("Segoe UI", 11), padx=10, pady=8, height=18)
-        self.text.tag_configure("h", font=("Segoe UI", 13, "bold"))
-        self.text.tag_configure("file", font=("Segoe UI", 11, "bold"), foreground="#0b4f9c")
-        self.text.tag_configure("quote", font=("Consolas", 10), foreground="#333", lmargin1=24, lmargin2=24)
-        self.text.tag_configure("hint", foreground="#7a5b00")
-        self.text.pack(fill="both", expand=True)
-        btns = ttk.Frame(right)
-        btns.pack(fill="x", pady=4)
-        self.b_starter = ttk.Button(btns, text="Open starter file", command=self.open_starter)
+        main = card(body)
+        main.grid(row=0, column=1, sticky="nsew")
+        head = ctk.CTkFrame(main, fg_color="transparent")
+        head.pack(fill="x", padx=20, pady=(16, 4))
+        self.h_app = pill(head, "", NAVY)
+        self.h_app.pack(side="left")
+        self.h_title = label(head, "", 20, "bold")
+        self.h_title.pack(side="left", padx=10)
+        self.h_marks = pill(head, "", NAVY_SOFT, NAVY)
+        self.h_marks.pack(side="right")
+        self.h_file = label(main, "", 13, "bold", NAVY)
+        self.h_file.pack(anchor="w", padx=20)
+        self.h_start = label(main, "", 12, color=MUTED)
+        self.h_start.pack(anchor="w", padx=20)
+        ctk.CTkFrame(main, fg_color=LINE, height=1).pack(fill="x", padx=20, pady=8)
+        self.text = textbox(main, size=14)
+        self.text.pack(fill="both", expand=True, padx=14)
+        self.text.tag_config("quote", foreground="#334", lmargin1=30, lmargin2=30, background="#F6F8FC")
+        self.text.tag_config("num", foreground=NAVY)
+        self.text.tag_config("hint", foreground="#7A5B00")
+
+        btns = ctk.CTkFrame(main, fg_color="transparent")
+        btns.pack(fill="x", padx=20, pady=14)
+        self.b_starter = btn(btns, "Open starter file", self.open_starter, "ghost", width=150)
         self.b_starter.pack(side="left")
         if allow_check:
-            ttk.Button(btns, text="Check this task now", command=self.check_one).pack(side="left", padx=6)
+            btn(btns, "Check this task now", self.check_one, width=180).pack(side="left", padx=8)
         if show_hints:
-            ttk.Button(btns, text="Show model answer", command=self.hint).pack(side="left")
-        ttk.Button(btns, text="Next →", command=lambda: self.move(1)).pack(side="right")
-        ttk.Button(btns, text="← Previous", command=lambda: self.move(-1)).pack(side="right", padx=4)
-        body.add(right, weight=3)
+            btn(btns, "Show model answer", self.hint, "ghost", width=160).pack(side="left")
+        btn(btns, "Next →", lambda: self.move(1), "ghost", width=90).pack(side="right")
+        btn(btns, "← Previous", lambda: self.move(-1), "ghost", width=110).pack(side="right", padx=8)
 
-        logf = ttk.LabelFrame(self, text="  Live activity (tracked automatically)  ", padding=4)
-        logf.pack(fill="x", pady=(6, 0))
-        self.log = tk.Listbox(logf, height=6, font=("Consolas", 9), activestyle="none")
-        self.log.pack(fill="x")
-        self.times = ttk.Label(logf, text="", style="Muted.TLabel")
-        self.times.pack(anchor="w")
+        # ---- activity
+        act = card(self)
+        act.pack(fill="x")
+        ah = ctk.CTkFrame(act, fg_color="transparent")
+        ah.pack(fill="x", padx=16, pady=(10, 4))
+        label(ah, "Live activity", 13, "bold").pack(side="left")
+        label(ah, "  tracked automatically", 12, color=MUTED).pack(side="left")
+        self.chips = {}
+        for k in ("ppt", "excel", "word"):
+            c = pill(ah, f"{APP_SHORT[k]} 0:00", APP_COL[k], size=11)
+            c.pack(side="right", padx=3)
+            self.chips[k] = c
+        self.log = textbox(act, height=96, mono=True, size=11)
+        self.log.pack(fill="x", padx=12, pady=(0, 10))
+        self.log.configure(state="disabled")
 
-        self.tlist.selection_set(0)
-        self.show_task()
+        self.pick(self.items[0])
         self.monitor.start()
         open_path(self.folder)
         self.tick()
 
     # ---------- task display
+    def pick(self, item):
+        for it in self.items:
+            it.select(it is item)
+        self.cur = self.items.index(item)
+        self.show_task()
+
     def current(self):
-        sel = self.tlist.curselection()
-        return self.tasks[sel[0]] if sel else self.tasks[0]
+        return self.tasks[self.cur]
 
     def move(self, d):
-        i = (self.tlist.curselection() or (0,))[0] + d
+        i = self.cur + d
         if 0 <= i < len(self.tasks):
-            self.tlist.selection_clear(0, "end")
-            self.tlist.selection_set(i)
-            self.tlist.see(i)
-            self.show_task()
+            self.pick(self.items[i])
 
     def show_task(self):
         t = self.current()
+        self.h_app.configure(text=f"  {APP_LABEL[t.app]}  ", fg_color=APP_COL[t.app])
+        self.h_title.configure(text=t.title)
+        self.h_marks.configure(text=f"  {t.marks:g} marks  ")
+        self.h_file.configure(text=f"Save as:  {t.file}")
+        self.h_start.configure(text=("Starter file in the folder: " + ", ".join(t.starters)) if t.starters else
+                               "Pictures for inserting are in the 'Pictures' folder.")
         tx = self.text
-        tx.config(state="normal")
+        tx.configure(state="normal")
         tx.delete("1.0", "end")
-        tx.insert("end", f"{APP_LABEL[t.app]} – {t.title}   ({t.marks:g} marks)\n", "h")
-        tx.insert("end", f"Save your work as: {t.file}\n", "file")
-        if t.starters:
-            tx.insert("end", "Starter file(s) in the test folder: " + ", ".join(t.starters) + "\n", "file")
-        tx.insert("end", "\n")
         n = 0
         for line in t.instructions:
-            if line.startswith("    ") or line.startswith("   "):
+            if line.startswith("   "):
                 tx.insert("end", line.strip() + "\n", "quote")
             else:
                 n += 1
-                tx.insert("end", f"{n}. {line}\n")
-        tx.insert("end", "\nSave inside the test folder. Pictures are in the 'Pictures' sub-folder.\n", "hint")
-        tx.config(state="disabled")
-        self.b_starter.state(["!disabled"] if t.starters else ["disabled"])
+                tx.insert("end", f"{n}.  ", "num")
+                tx.insert("end", line + "\n")
+            tx.insert("end", "\n" if not line.startswith("   ") else "")
+        tx.insert("end", "Save inside the test folder with the exact file name.", "hint")
+        tx.configure(state="disabled")
+        self.b_starter.configure(state="normal" if t.starters else "disabled")
 
     def open_starter(self):
-        t = self.current()
-        for name in t.starters:
+        for name in self.current().starters:
             open_path(self.folder / name)
 
     def hint(self):
         t = self.current()
-        messagebox.showinfo("Model answer", f"{t.title}\n\n" + "\n".join(f"{i}. {s}" for i, s in enumerate(t.solution, 1)))
+        Popup(self.app, f"Model answer – {t.title}", lines=t.solution)
 
     def check_one(self):
-        t = self.current()
-        res = grade_task(t, self.folder, self.known)
+        res = grade_task(self.current(), self.folder, self.known)
         ResultPopup(self.app, res)
 
     # ---------- timer & log
+    def add_log(self, ev):
+        self.log.configure(state="normal")
+        self.log.insert("end", f"{ev['time']}  {APP_NAME.get(ev['app'], ev['app']):<10}  {ev['msg']}\n")
+        self.log.see("end")
+        self.log.configure(state="disabled")
+
     def tick(self):
         if self.done:
             return
         while True:
             try:
-                ev = self.events_q.get_nowait()
+                self.add_log(self.events_q.get_nowait())
             except queue.Empty:
                 break
-            self.log.insert("end", f"{ev['time']}  {APP_NAME.get(ev['app'], ev['app']):<10} {ev['msg']}")
-            self.log.see("end")
-            if self.log.size() > 300:
-                self.log.delete(0)
-        used = time.monotonic() - self.started
-        left = max(0, self.allowed - used)
-        self.timer.config(text=fmt_secs(left), foreground=BAD if left <= 300 else "")
-        s = self.monitor.app_seconds
-        self.times.config(text="Time in programs –  Word " + fmt_secs(s["word"]) + "   Excel " + fmt_secs(s["excel"]) +
-                          "   PowerPoint " + fmt_secs(s["ppt"]) +
-                          ("" if self.monitor.com_ok or sys.platform != "win32" else
-                           "   (detailed Office tracking unavailable)"))
+        left = max(0, self.allowed - (time.monotonic() - self.started))
+        colour = (BAD if left <= min(300, self.allowed * 0.2) else
+                  SAFFRON_DARK if left <= min(600, self.allowed * 0.4) else NAVY)
+        self.timer.configure(text=fmt_secs(left), fg_color=colour)
+        for k, c in self.chips.items():
+            c.configure(text=f"  {APP_SHORT[k]} {fmt_secs(self.monitor.app_seconds[k])}  ")
         for mins in (10, 5, 1):
             if left <= mins * 60 and mins not in self.warned and self.allowed > mins * 60 + 30:
                 self.warned.add(mins)
                 self.app.bell()
                 self.monitor.log("test", f"{mins} minute(s) left")
-                self.flash(f"Only {mins} minute{'s' if mins > 1 else ''} left – save your files!")
+                Popup(self.app, "Time warning", f"Only {mins} minute{'s' if mins > 1 else ''} left.\nSave your files now!",
+                      danger=True, auto_close=8000)
         if left <= 0:
-            self.monitor.log("test", "Time over – submitted automatically")
+            self.monitor.log("test", "Time over - submitted automatically")
             self.finish(auto=True)
             return
         self.after(1000, self.tick)
-
-    def flash(self, msg):
-        w = tk.Toplevel(self)
-        w.title("Time warning")
-        w.attributes("-topmost", True)
-        ttk.Label(w, text=msg, font=("Segoe UI", 14, "bold"), foreground=BAD, padding=20).pack()
-        ttk.Button(w, text="OK", command=w.destroy).pack(pady=(0, 12))
-        w.after(8000, lambda: w.winfo_exists() and w.destroy())
 
     # ---------- submit
     def submit(self):
@@ -406,12 +591,13 @@ class TestView(ttk.Frame):
         self.done = True
         self.monitor.stop()
         used = min(time.monotonic() - self.started, self.allowed)
-        wait = ttk.Label(self, text="Checking your files…", style="H2.TLabel")
+        wait = card(self, fg_color=NAVY)
+        label(wait, "Checking your files…", 18, "bold", "white").pack(padx=40, pady=24)
         wait.place(relx=0.5, rely=0.5, anchor="center")
         self.update_idletasks()
         results = grade_tasks(self.tasks, self.folder)
         rec = make_record(self.mode, self.title_, self.folder, results, used, self.allowed,
-                          self.monitor.app_seconds, self.monitor.events)
+                          self.monitor.app_seconds, self.monitor.events, spec=self.spec, attempt=self.attempt)
         try:
             save_attempt(rec)
         except Exception:
@@ -424,113 +610,220 @@ class TestView(ttk.Frame):
         if auto:
             messagebox.showinfo(APP_TITLE, "Time is over. Your test has been submitted and checked.")
         self.app.attributes("-topmost", False)
-        self.app.switch(ResultView(self.app, rec, report))
+        self.app.switch(ResultView, rec, report)
 
 
-# =================================================================== results
+# =================================================================== popups
+
+class Popup(ctk.CTkToplevel):
+    def __init__(self, app, title, text=None, lines=None, danger=False, auto_close=None):
+        super().__init__(app, fg_color=BG)
+        self.title(title)
+        self.attributes("-topmost", True)
+        self.resizable(False, False)
+        c = card(self)
+        c.pack(fill="both", expand=True, padx=14, pady=14)
+        label(c, title, 17, "bold", BAD if danger else NAVY).pack(anchor="w", padx=20, pady=(16, 6))
+        if text:
+            label(c, text, 15, "bold" if danger else "normal", justify="left").pack(anchor="w", padx=20, pady=6)
+        if lines:
+            t = textbox(c, height=min(60 + 34 * len(lines), 420), size=13)
+            for i, s in enumerate(lines, 1):
+                t.insert("end", f"{i}.  {s}\n\n")
+            t.configure(state="disabled", width=560)
+            t.pack(fill="both", expand=True, padx=12)
+        btn(c, "OK", self.destroy, "accent" if danger else "primary", width=110).pack(pady=14)
+        if auto_close:
+            self.after(auto_close, lambda: self.winfo_exists() and self.destroy())
+
+
+def make_tree(parent):
+    frame = ctk.CTkFrame(parent, fg_color=CARD, corner_radius=0)
+    tree = ttk.Treeview(frame, columns=("marks",), show="tree headings", style="Nice.Treeview")
+    tree.heading("#0", text="  Task / check", anchor="w")
+    tree.heading("marks", text="Marks")
+    tree.column("#0", width=420)
+    tree.column("marks", width=90, anchor="center", stretch=False)
+    sb = ctk.CTkScrollbar(frame, command=tree.yview, button_color="#C9D3E6", button_hover_color="#AEB9CE")
+    tree.configure(yscrollcommand=sb.set)
+    tree.pack(side="left", fill="both", expand=True)
+    sb.pack(side="right", fill="y")
+    tree.tag_configure("task", font=(FAMILY, 11, "bold"), background="#F6F8FC")
+    tree.tag_configure("ok", foreground=OK)
+    tree.tag_configure("bad", foreground=BAD)
+    tree.tag_configure("note", foreground="#7A5B00")
+    return frame, tree
+
 
 def fill_result_tree(tree, results):
-    """results: list of task result dicts. Returns {iid: (kind, data)}."""
     meta = {}
     for t in results:
-        pid = tree.insert("", "end", text=f"{APP_LABEL[t['app']]} – {t['title']}", values=(f"{t['got']:g} / {t['marks']:g}",),
-                          open=True)
+        pid = tree.insert("", "end", text=f"  {APP_SHORT[t['app']]}  ·  {t['title']}", values=(f"{t['got']:g} / {t['marks']:g}",),
+                          open=True, tags=("task",))
         meta[pid] = ("task", t)
         for c in t["checks"]:
             if c["desc"] == "Note":
-                iid = tree.insert(pid, "end", text=f"ⓘ {c['found']}", values=("",), tags=("note",))
+                iid = tree.insert(pid, "end", text=f"   ⓘ  {c['found']}", values=("",), tags=("note",))
             else:
-                iid = tree.insert(pid, "end", text=("✔ " if c["ok"] else "✘ ") + c["desc"],
+                iid = tree.insert(pid, "end", text=("   ✔  " if c["ok"] else "   ✘  ") + c["desc"],
                                   values=(f"{c['got']:g} / {c['marks']:g}",), tags=("ok" if c["ok"] else "bad",))
             meta[iid] = ("check", c)
-    tree.tag_configure("ok", foreground=OK)
-    tree.tag_configure("bad", foreground=BAD)
-    tree.tag_configure("note", foreground="#7a5b00")
     return meta
 
 
+def make_detail(parent):
+    t = textbox(parent, size=13)
+    t.tag_config("h", foreground=INK)
+    t.tag_config("b", foreground=NAVY)
+    t.tag_config("ok", foreground=OK)
+    t.tag_config("bad", foreground=BAD)
+    t.tag_config("how", background="#FFF6E0", lmargin1=8, lmargin2=8)
+    t.tag_config("muted", foreground=MUTED)
+    t.configure(state="disabled")
+    return t
+
+
 def show_detail(text, kind, data):
-    text.config(state="normal")
+    text.configure(state="normal")
     text.delete("1.0", "end")
     if kind == "task":
-        text.insert("end", f"{data['title']}  –  {data['got']:g} / {data['marks']:g}\n", "h")
-        text.insert("end", f"File: {data['file']}\n\n")
-        text.insert("end", "Model answer (step by step):\n", "b")
+        text.insert("end", f"{data['title']}\n", "h")
+        text.insert("end", f"{data['got']:g} / {data['marks']:g} marks  ·  file {data['file']}\n\n", "muted")
+        text.insert("end", "MODEL ANSWER (step by step)\n\n", "b")
         for i, s in enumerate(data.get("solution") or [], 1):
-            text.insert("end", f"{i}. {s}\n")
+            text.insert("end", f"{i}.  {s}\n\n")
     else:
         c = data
         text.insert("end", c["desc"] + "\n", "h")
         text.insert("end", ("✔ Correct" if c["ok"] else "✘ Not correct") + f"   ({c['got']:g} / {c['marks']:g} marks)\n\n",
                     "ok" if c["ok"] else "bad")
-        text.insert("end", "What we found: ", "b")
-        text.insert("end", c["found"] + "\n")
+        text.insert("end", "WHAT WE FOUND\n", "b")
+        text.insert("end", c["found"] + "\n\n")
         if c.get("expected"):
-            text.insert("end", "Expected: ", "b")
-            text.insert("end", c["expected"] + "\n")
+            text.insert("end", "EXPECTED\n", "b")
+            text.insert("end", c["expected"] + "\n\n")
         if c.get("how"):
-            text.insert("end", "\nHow to do it:\n", "b")
+            text.insert("end", "HOW TO DO IT\n", "b")
             text.insert("end", c["how"] + "\n", "how")
         if c.get("topic"):
             text.insert("end", f"\nSyllabus topic: {c['topic']}\n", "muted")
-    text.config(state="disabled")
+    text.configure(state="disabled")
 
 
-def make_detail_text(parent):
-    t = ScrolledText(parent, wrap="word", font=("Segoe UI", 11), padx=10, pady=8, height=10)
-    t.tag_configure("h", font=("Segoe UI", 12, "bold"))
-    t.tag_configure("b", font=("Segoe UI", 11, "bold"))
-    t.tag_configure("ok", foreground=OK, font=("Segoe UI", 11, "bold"))
-    t.tag_configure("bad", foreground=BAD, font=("Segoe UI", 11, "bold"))
-    t.tag_configure("how", background="#fff8e1")
-    t.tag_configure("muted", foreground="#5b6475")
-    t.config(state="disabled")
-    return t
+class ResultPopup(ctk.CTkToplevel):
+    """Instant check of one task (practice and drills)."""
+    def __init__(self, app, res):
+        super().__init__(app, fg_color=BG)
+        self.title(f"Check: {res.title}")
+        self.geometry("900x600")
+        self.attributes("-topmost", True)
+        full = res.got >= res.marks
+        head = card(self, fg_color=OK_SOFT if full else CARD)
+        head.pack(fill="x", padx=14, pady=(14, 8))
+        label(head, res.title, 17, "bold").pack(side="left", padx=18, pady=12)
+        label(head, f"{res.got:g} / {res.marks:g}", 20, "bold", OK if full else NAVY).pack(side="right", padx=18)
+        body = ctk.CTkFrame(self, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=14)
+        body.grid_columnconfigure(0, weight=3)
+        body.grid_columnconfigure(1, weight=2)
+        body.grid_rowconfigure(0, weight=1)
+        c1 = card(body)
+        c1.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        fr, tree = make_tree(c1)
+        fr.pack(fill="both", expand=True, padx=8, pady=8)
+        c2 = card(body)
+        c2.grid(row=0, column=1, sticky="nsew")
+        detail = make_detail(c2)
+        detail.pack(fill="both", expand=True, padx=8, pady=8)
+        meta = fill_result_tree(tree, [res.to_dict()])
+        tree.bind("<<TreeviewSelect>>", lambda e: tree.selection() and tree.selection()[0] in meta and
+                  show_detail(detail, *meta[tree.selection()[0]]))
+        first = next((i for i, (k, d) in meta.items() if k == "check" and not d["ok"]), None)
+        if first:
+            tree.selection_set(first)
+        bar = ctk.CTkFrame(self, fg_color="transparent")
+        bar.pack(fill="x", padx=14, pady=12)
+        label(bar, "Fix the mistakes, save, and press 'Check this task now' again.", 12, color=MUTED).pack(side="left")
+        btn(bar, "Close", self.destroy, width=100).pack(side="right")
 
 
-class ResultView(ttk.Frame):
-    def __init__(self, app: App, rec, report):
-        super().__init__(app, padding=12)
+# =================================================================== results
+
+def verdict(pct):
+    if pct >= 85:
+        return "Excellent – exam ready!", OK
+    if pct >= 70:
+        return "Good – polish the weak points", NAVY
+    if pct >= 50:
+        return "Fair – keep practising", SAFFRON_DARK
+    return "Needs more practice", BAD
+
+
+class ResultView(ctk.CTkFrame):
+    def __init__(self, parent, app: App, rec, report):
+        super().__init__(parent, fg_color="transparent")
         self.app = app
-        ttk.Label(self, text=f"{rec['title']} – Result", style="H1.TLabel").pack(anchor="w")
-        summ = ttk.Frame(self)
-        summ.pack(fill="x", pady=6)
-        ttk.Label(summ, text=f"Total: {rec['score']:g} / {rec['out_of']:g}", font=("Segoe UI", 16, "bold")).pack(side="left")
-        for k in ("word", "excel", "ppt"):
-            if k in rec["sections"]:
-                g, m = rec["sections"][k]
-                ttk.Label(summ, text=f"   {APP_LABEL[k]}: {g:g}/{m:g}", font=("Segoe UI", 12)).pack(side="left")
-        ttk.Label(self, text=f"Time used {fmt_secs(rec['seconds_used'])} of {fmt_secs(rec['seconds_allowed'])}   ·   "
-                             f"Time in Word {fmt_secs(rec['app_seconds'].get('word', 0))}, "
-                             f"Excel {fmt_secs(rec['app_seconds'].get('excel', 0))}, "
-                             f"PowerPoint {fmt_secs(rec['app_seconds'].get('ppt', 0))}",
-                  style="Muted.TLabel").pack(anchor="w")
-        ttk.Label(self, text="Click any line to see what was found, what was expected and how to do it. "
-                             "Click a task name for its model answer.", style="Muted.TLabel").pack(anchor="w", pady=(2, 6))
+        self.rec = rec
+        pct = rec["score"] / rec["out_of"] * 100 if rec["out_of"] else 0
+        vtext, vcol = verdict(pct)
 
-        pane = ttk.PanedWindow(self, orient="vertical")
-        pane.pack(fill="both", expand=True)
-        tf = ttk.Frame(pane)
-        self.tree = ttk.Treeview(tf, columns=("marks",), show="tree headings")
-        self.tree.heading("#0", text="Task / check")
-        self.tree.heading("marks", text="Marks")
-        self.tree.column("marks", width=90, anchor="center", stretch=False)
-        sb = ttk.Scrollbar(tf, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=sb.set)
-        self.tree.pack(side="left", fill="both", expand=True)
-        sb.pack(side="right", fill="y")
-        pane.add(tf, weight=3)
-        self.detail = make_detail_text(pane)
-        pane.add(self.detail, weight=2)
+        hero = card(self)
+        hero.pack(fill="x")
+        left = ctk.CTkFrame(hero, fg_color="transparent")
+        left.pack(side="left", padx=24, pady=16)
+        row = ctk.CTkFrame(left, fg_color="transparent")
+        row.pack(anchor="w")
+        label(row, rec["title"], 15, "bold", MUTED).pack(side="left")
+        if rec.get("attempt"):
+            pill(row, f"Attempt {rec['attempt']}", NAVY_SOFT, NAVY, size=11).pack(side="left", padx=8)
+        label(left, f"{rec['score']:g} / {rec['out_of']:g}", 40, "bold", NAVY).pack(anchor="w")
+        label(left, f"{pct:.0f}%  ·  {vtext}", 15, "bold", vcol).pack(anchor="w")
+        label(left, f"Time used {fmt_secs(rec['seconds_used'])} of {fmt_secs(rec['seconds_allowed'])}", 12, color=MUTED).pack(anchor="w", pady=(4, 0))
+
+        right = ctk.CTkFrame(hero, fg_color="transparent")
+        right.pack(side="right", padx=24, pady=16, fill="y")
+        for k in ("word", "excel", "ppt"):
+            if k not in rec["sections"]:
+                continue
+            g, m = rec["sections"][k]
+            r = ctk.CTkFrame(right, fg_color="transparent")
+            r.pack(fill="x", pady=4)
+            label(r, APP_SHORT[k], 13, "bold", APP_COL[k], width=95, anchor="w").pack(side="left")
+            pb = ctk.CTkProgressBar(r, width=240, height=12, corner_radius=6, progress_color=APP_COL[k], fg_color="#E6EAF2")
+            pb.set(g / m if m else 0)
+            pb.pack(side="left", padx=8)
+            label(r, f"{g:g} / {m:g}", 13, "bold", width=70).pack(side="left")
+            t = rec.get("app_seconds", {}).get(k)
+            label(r, f"⏱ {fmt_secs(t or 0)}", 12, color=MUTED).pack(side="left", padx=6)
+
+        label(self, "Click any line to see what was found, what was expected and how to do it. "
+                    "Click a task name for its model answer.", 12, color=MUTED).pack(anchor="w", pady=(10, 6))
+
+        body = ctk.CTkFrame(self, fg_color="transparent")
+        body.pack(fill="both", expand=True)
+        body.grid_columnconfigure(0, weight=3)
+        body.grid_columnconfigure(1, weight=2)
+        body.grid_rowconfigure(0, weight=1)
+        c1 = card(body)
+        c1.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        fr, self.tree = make_tree(c1)
+        fr.pack(fill="both", expand=True, padx=8, pady=8)
+        c2 = card(body)
+        c2.grid(row=0, column=1, sticky="nsew")
+        self.detail = make_detail(c2)
+        self.detail.pack(fill="both", expand=True, padx=8, pady=8)
         self.meta = fill_result_tree(self.tree, rec["results"])
         self.tree.bind("<<TreeviewSelect>>", self.on_select)
 
-        bar = ttk.Frame(self)
-        bar.pack(fill="x", pady=8)
-        ttk.Button(bar, text="← Home", command=app.show_home).pack(side="left")
+        bar = ctk.CTkFrame(self, fg_color="transparent")
+        bar.pack(fill="x", pady=(12, 0))
+        btn(bar, "← Home", app.show_home, "ghost", width=110).pack(side="left")
+        if rec.get("spec"):
+            btn(bar, "Retake this test", lambda: app.start(rec["spec"]), "accent", width=170).pack(side="right")
         if report:
-            ttk.Button(bar, text="Open full report (printable)", command=lambda: webbrowser.open(Path(report).as_uri())).pack(side="right")
-        ttk.Button(bar, text="Open test folder", command=lambda: open_path(rec["folder"])).pack(side="right", padx=6)
+            btn(bar, "Printable report", lambda: webbrowser.open(Path(report).as_uri()), "ghost", width=160).pack(side="right", padx=8)
+        if rec.get("folder"):
+            btn(bar, "Open folder", lambda: open_path(rec["folder"]), "ghost", width=120).pack(side="right")
 
         first_bad = next((i for i, (k, d) in self.meta.items() if k == "check" and not d["ok"] and d["desc"] != "Note"), None)
         if first_bad:
@@ -543,160 +836,221 @@ class ResultView(ttk.Frame):
             show_detail(self.detail, *self.meta[sel[0]])
 
 
-class ResultPopup(tk.Toplevel):
-    """Instant check of one task (practice and drills)."""
-    def __init__(self, app, res):
-        super().__init__(app)
-        self.title(f"Check: {res.title}")
-        self.geometry("720x520")
-        self.attributes("-topmost", True)
-        ttk.Label(self, text=f"{res.title}: {res.got:g} / {res.marks:g}", style="H2.TLabel", padding=8).pack(anchor="w")
-        d = res.to_dict()
-        pane = ttk.PanedWindow(self, orient="vertical")
-        pane.pack(fill="both", expand=True, padx=8, pady=4)
-        tree = ttk.Treeview(pane, columns=("marks",), show="tree")
-        tree.column("marks", width=80, anchor="center", stretch=False)
-        pane.add(tree, weight=3)
-        detail = make_detail_text(pane)
-        pane.add(detail, weight=2)
-        meta = fill_result_tree(tree, [d])
-        tree.bind("<<TreeviewSelect>>", lambda e: tree.selection() and tree.selection()[0] in meta and
-                  show_detail(detail, *meta[tree.selection()[0]]))
-        ttk.Label(self, text="Fix the mistakes, save, and press 'Check this task now' again.", style="Muted.TLabel",
-                  padding=6).pack(anchor="w")
-        ttk.Button(self, text="Close", command=self.destroy).pack(pady=(0, 8))
-
-
 # =================================================================== quiz
 
-class QuizView(ttk.Frame):
-    def __init__(self, app: App, questions):
-        super().__init__(app, padding=20)
+class QuizView(ctk.CTkFrame):
+    def __init__(self, parent, app: App, questions, quiz_app=None):
+        super().__init__(parent, fg_color="transparent")
         self.app = app
         self.qs = questions
+        self.quiz_app = quiz_app
         self.i = 0
         self.score = 0
         self.answers = []
-        ttk.Label(self, text="Shortcut Key Quiz", style="H1.TLabel").pack(anchor="w")
-        self.progress = ttk.Label(self, text="", style="Muted.TLabel")
-        self.progress.pack(anchor="w")
-        self.q = ttk.Label(self, text="", font=("Segoe UI", 15), wraplength=800, padding=(0, 20))
-        self.q.pack(anchor="w")
-        self.btns = []
+
+        self.box = card(self)
+        self.box.place(relx=0.5, rely=0.47, anchor="center", relwidth=0.62, relheight=0.9)
+        top = ctk.CTkFrame(self.box, fg_color="transparent")
+        top.pack(fill="x", padx=28, pady=(22, 4))
+        label(top, "Shortcut Key Quiz", 20, "bold").pack(side="left")
+        self.scorelbl = pill(top, "", NAVY_SOFT, NAVY)
+        self.scorelbl.pack(side="right")
+        self.progress = ctk.CTkProgressBar(self.box, height=8, corner_radius=4, progress_color=SAFFRON, fg_color="#E6EAF2")
+        self.progress.pack(fill="x", padx=28, pady=(6, 4))
+        self.count = label(self.box, "", 12, color=MUTED)
+        self.count.pack(anchor="w", padx=28)
+        self.tag = pill(self.box, "", NAVY, size=11)
+        self.tag.pack(anchor="w", padx=28, pady=(16, 4))
+        self.q = label(self.box, "", 22, "bold", wraplength=620, justify="left")
+        self.q.pack(anchor="w", padx=28, pady=(0, 16))
+        self.opts = []
         for _ in range(4):
-            b = tk.Button(self, text="", font=("Segoe UI", 13), width=28, relief="groove", bg="#f3f5fa")
-            b.pack(anchor="w", pady=4)
-            self.btns.append(b)
-        self.feedback = ttk.Label(self, text="", font=("Segoe UI", 12, "bold"))
-        self.feedback.pack(anchor="w", pady=10)
-        bar = ttk.Frame(self)
-        bar.pack(fill="x", side="bottom")
-        ttk.Button(bar, text="← Home", command=app.show_home).pack(side="left")
-        self.next_b = ttk.Button(bar, text="Next →", command=self.next)
+            b = ctk.CTkButton(self.box, text="", height=50, corner_radius=12, font=F(16, "bold"), anchor="w",
+                              fg_color=CARD, hover_color=NAVY_SOFT, text_color=INK, border_width=1, border_color="#C9D3E6")
+            b.pack(fill="x", padx=28, pady=5)
+            self.opts.append(b)
+        self.feedback = label(self.box, "", 15, "bold")
+        self.feedback.pack(anchor="w", padx=28, pady=10)
+        bar = ctk.CTkFrame(self.box, fg_color="transparent")
+        bar.pack(side="bottom", fill="x", padx=28, pady=20)
+        btn(bar, "← Home", app.show_home, "ghost", width=110).pack(side="left")
+        self.next_b = btn(bar, "Next →", self.next, width=120)
         self.next_b.pack(side="right")
         self.show()
 
     def show(self):
         q = self.qs[self.i]
-        self.progress.config(text=f"Question {self.i + 1} of {len(self.qs)}   ·   Score {self.score}")
-        self.q.config(text=f"Which shortcut does this?\n{q['q']}")
-        for b, opt in zip(self.btns, q["options"]):
-            b.config(text=opt, state="normal", bg="#f3f5fa", command=lambda o=opt: self.pick(o))
-        self.feedback.config(text="")
-        self.next_b.state(["disabled"])
+        self.progress.set(self.i / len(self.qs))
+        self.count.configure(text=f"Question {self.i + 1} of {len(self.qs)}")
+        self.scorelbl.configure(text=f"  Score {self.score}  ")
+        self.tag.configure(text=f"  {'All programs' if q['app'] == 'All' else q['app']}  ", fg_color=APP_COL.get({"Word": "word", "Excel": "excel",
+                                                                           "PowerPoint": "ppt"}.get(q["app"], ""), NAVY))
+        self.q.configure(text=q["q"].split("] ", 1)[-1])
+        for b, opt, letter in zip(self.opts, q["options"], "ABCD"):
+            b.configure(text=f"   {letter}.   {opt}", state="normal", fg_color=CARD, border_color="#C9D3E6",
+                        text_color=INK, command=lambda o=opt: self.pick(o))
+        self.feedback.configure(text="")
+        self.next_b.configure(state="disabled")
 
     def pick(self, opt):
         q = self.qs[self.i]
         ok = opt == q["answer"]
         self.score += ok
         self.answers.append((q, opt, ok))
-        for b in self.btns:
-            b.config(state="disabled")
-            if b.cget("text") == q["answer"]:
-                b.config(bg="#c8e6c9")
-            elif b.cget("text") == opt:
-                b.config(bg="#ffcdd2")
-        self.feedback.config(text="Correct!" if ok else f"Not correct. The answer is {q['answer']}.",
-                             foreground=OK if ok else BAD)
-        self.next_b.state(["!disabled"])
+        for b, o in zip(self.opts, q["options"]):
+            b.configure(state="disabled", text_color_disabled=INK)
+            if o == q["answer"]:
+                b.configure(fg_color=OK_SOFT, border_color=OK)
+            elif o == opt:
+                b.configure(fg_color=BAD_SOFT, border_color=BAD)
+        self.feedback.configure(text="✔ Correct!" if ok else f"✘ Not correct. The answer is {q['answer']}.",
+                                text_color=OK if ok else BAD)
+        self.scorelbl.configure(text=f"  Score {self.score}  ")
+        self.next_b.configure(state="normal")
 
     def next(self):
         self.i += 1
         if self.i < len(self.qs):
             self.show()
             return
-        for w in self.winfo_children():
+        for w in self.box.winfo_children():
             w.destroy()
-        ttk.Label(self, text=f"Quiz finished: {self.score} / {len(self.qs)}", style="H1.TLabel").pack(anchor="w")
-        t = ScrolledText(self, wrap="word", font=("Segoe UI", 11), height=20)
-        t.tag_configure("bad", foreground=BAD)
+        pct = self.score / len(self.qs) * 100
+        vtext, vcol = verdict(pct)
+        label(self.box, "Quiz finished", 15, "bold", MUTED).pack(anchor="w", padx=28, pady=(22, 0))
+        label(self.box, f"{self.score} / {len(self.qs)}", 40, "bold", NAVY).pack(anchor="w", padx=28)
+        label(self.box, vtext, 15, "bold", vcol).pack(anchor="w", padx=28)
+        t = textbox(self.box, size=13)
+        t.tag_config("bad", foreground=BAD)
+        t.tag_config("ok", foreground=OK)
         for q, opt, ok in self.answers:
-            line = f"{'✔' if ok else '✘'} {q['q']} → {q['answer']}" + ("" if ok else f"   (you chose {opt})") + "\n"
-            t.insert("end", line, () if ok else ("bad",))
-        t.config(state="disabled")
-        t.pack(fill="both", expand=True, pady=10)
-        bar = ttk.Frame(self)
-        bar.pack(fill="x")
-        ttk.Button(bar, text="← Home", command=self.app.show_home).pack(side="left")
-        ttk.Button(bar, text="New quiz", command=lambda: self.app.switch(QuizView(self.app, make_quiz(20)))).pack(side="right")
-        from .session import save_attempt as _save
+            t.insert("end", ("✔ " if ok else "✘ ") + q["q"] + "  →  " + q["answer"] +
+                     ("" if ok else f"   (you chose {opt})") + "\n", "ok" if ok else "bad")
+        t.configure(state="disabled")
+        t.pack(fill="both", expand=True, padx=20, pady=12)
+        bar = ctk.CTkFrame(self.box, fg_color="transparent")
+        bar.pack(fill="x", padx=28, pady=(0, 20))
+        btn(bar, "← Home", self.app.show_home, "ghost", width=110).pack(side="left")
+        btn(bar, "New quiz", lambda: self.app.switch(QuizView, make_quiz(20, self.quiz_app), self.quiz_app), "accent",
+            width=130).pack(side="right")
         try:
-            _save({"when": time.strftime("%Y-%m-%dT%H:%M:%S"), "mode": "Shortcut quiz", "title": "Shortcut Key Quiz",
-                   "folder": "", "score": self.score, "out_of": len(self.qs), "sections": {}, "seconds_used": 0,
-                   "seconds_allowed": 0, "app_seconds": {}, "results": [], "events": []})
+            save_attempt({"when": time.strftime("%Y-%m-%dT%H:%M:%S"), "mode": "Shortcut quiz", "title": "Shortcut Key Quiz",
+                          "folder": "", "score": self.score, "out_of": len(self.qs), "sections": {}, "seconds_used": 0,
+                          "seconds_allowed": 0, "app_seconds": {}, "results": [], "events": []})
         except Exception:
             pass
 
 
 # =================================================================== history
 
-class HistoryView(ttk.Frame):
-    def __init__(self, app: App):
-        super().__init__(app, padding=14)
+class HistoryView(ctk.CTkFrame):
+    def __init__(self, parent, app: App):
+        super().__init__(parent, fg_color="transparent")
         self.app = app
-        ttk.Label(self, text="My Progress", style="H1.TLabel").pack(anchor="w")
-        hist = load_history()
-        cols = ("when", "mode", "score", "word", "excel", "ppt", "time")
-        tree = ttk.Treeview(self, columns=cols, show="headings", height=12)
-        for c, label, w in (("when", "Date", 140), ("mode", "Test", 260), ("score", "Score", 80), ("word", "Word", 70),
-                            ("excel", "Excel", 70), ("ppt", "PowerPoint", 80), ("time", "Time used", 80)):
-            tree.heading(c, text=label)
-            tree.column(c, width=w, anchor="w" if c in ("when", "mode") else "center")
+        top = ctk.CTkFrame(self, fg_color="transparent")
+        top.pack(fill="x")
+        label(top, "My Progress", 22, "bold").pack(side="left")
+        btn(top, "← Home", app.show_home, "ghost", width=110).pack(side="right")
+
+        body = ctk.CTkFrame(self, fg_color="transparent")
+        body.pack(fill="both", expand=True, pady=(10, 0))
+        body.grid_columnconfigure(0, weight=3)
+        body.grid_columnconfigure(1, weight=2)
+        body.grid_rowconfigure(0, weight=1)
+
+        c1 = card(body)
+        c1.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        label(c1, "Past attempts", 15, "bold").pack(anchor="w", padx=16, pady=(14, 6))
+        frame = ctk.CTkFrame(c1, fg_color=CARD)
+        frame.pack(fill="both", expand=True, padx=8)
+        cols = ("when", "test", "att", "score", "word", "excel", "ppt")
+        self.tree = ttk.Treeview(frame, columns=cols, show="headings", style="Nice.Treeview")
+        for c, text, w, anchor in (("when", "Date", 150, "w"), ("test", "Test", 230, "w"), ("att", "Try", 50, "center"),
+                                   ("score", "Score", 80, "center"), ("word", "Word", 70, "center"),
+                                   ("excel", "Excel", 70, "center"), ("ppt", "PPT", 70, "center")):
+            self.tree.heading(c, text=text, anchor=anchor)
+            self.tree.column(c, width=w, anchor=anchor, stretch=c == "test")
+        sb = ctk.CTkScrollbar(frame, command=self.tree.yview, button_color="#C9D3E6")
+        self.tree.configure(yscrollcommand=sb.set)
+        self.tree.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+        self.tree.bind("<Double-1>", lambda e: self.open())
+        bar = ctk.CTkFrame(c1, fg_color="transparent")
+        bar.pack(fill="x", padx=12, pady=12)
+        btn(bar, "Open result", self.open, "ghost", width=120).pack(side="left")
+        btn(bar, "Retake", self.retake, "accent", width=100).pack(side="left", padx=8)
+        btn(bar, "Delete attempt", self.delete, "danger", width=140).pack(side="right")
+        self.load()
+
+        c2 = card(body)
+        c2.grid(row=0, column=1, sticky="nsew")
+        label(c2, "Weak areas", 15, "bold").pack(anchor="w", padx=16, pady=(14, 0))
+        label(c2, "Topics you get wrong most often", 12, color=MUTED).pack(anchor="w", padx=16, pady=(0, 8))
+        wl = ctk.CTkScrollableFrame(c2, fg_color="transparent")
+        wl.pack(fill="both", expand=True, padx=6, pady=(0, 10))
+        weak = weak_topics(load_history(), limit=15)
+        if not weak:
+            label(wl, "Take a test first – your weak areas will show here.", 13, color=MUTED).pack(anchor="w", padx=10)
+        for app_, topic, ok, n, rate in weak:
+            r = ctk.CTkFrame(wl, fg_color="transparent")
+            r.pack(fill="x", pady=5, padx=6)
+            hrow = ctk.CTkFrame(r, fg_color="transparent")
+            hrow.pack(fill="x")
+            name = topic[0].upper() + topic[1:]
+            label(hrow, name if len(name) <= 30 else name[:29] + "…", 13, "bold").pack(side="left")
+            label(hrow, f"{ok}/{n}", 12, "bold", MUTED).pack(side="right")
+            label(r, APP_SHORT.get(app_, app_), 11, color=APP_COL.get(app_, MUTED)).pack(anchor="w")
+            pb = ctk.CTkProgressBar(r, height=8, corner_radius=4, fg_color="#E6EAF2",
+                                    progress_color=BAD if rate < 0.5 else SAFFRON if rate < 0.8 else OK)
+            pb.set(rate)
+            pb.pack(fill="x", pady=(3, 0))
+
+    def load(self):
+        self.tree.delete(*self.tree.get_children())
         self.rows = {}
-        for rec in reversed(hist):
+        for rec in reversed(load_history()):
             s = rec.get("sections", {})
             fmt = lambda k: f"{s[k][0]:g}/{s[k][1]:g}" if k in s else "–"
-            iid = tree.insert("", "end", values=(rec["when"].replace("T", " ")[:16], f"{rec['title']} ({rec['mode']})",
-                                                 f"{rec['score']:g}/{rec['out_of']:g}", fmt("word"), fmt("excel"), fmt("ppt"),
-                                                 fmt_secs(rec.get("seconds_used", 0))))
+            w = rec["when"]
+            when = f"{w[8:10]}-{w[5:7]}-{w[0:4]} {w[11:16]}"
+            iid = self.tree.insert("", "end", values=(when, rec["title"],
+                                                      rec.get("attempt", "–"), f"{rec['score']:g}/{rec['out_of']:g}",
+                                                      fmt("word"), fmt("excel"), fmt("ppt")))
             self.rows[iid] = rec
-        tree.pack(fill="both", expand=True)
-        tree.bind("<Double-1>", lambda e: self.open(tree))
-        ttk.Label(self, text="Double-click a test to open its full report.", style="Muted.TLabel").pack(anchor="w")
 
-        ttk.Label(self, text="Weak areas (topics you most often get wrong)", style="H2.TLabel").pack(anchor="w", pady=(12, 4))
-        weak = weak_topics(hist)
-        wt = ttk.Treeview(self, columns=("app", "topic", "rate"), show="headings", height=8)
-        for c, label, w in (("app", "Program", 120), ("topic", "Syllabus topic", 380), ("rate", "Correct", 120)):
-            wt.heading(c, text=label)
-            wt.column(c, width=w)
-        for app_, topic, ok, n, rate in weak:
-            wt.insert("", "end", values=(APP_LABEL.get(app_, app_), topic, f"{ok}/{n}  ({rate:.0%})"))
-        wt.pack(fill="x")
-        if not weak:
-            ttk.Label(self, text="Take a test first – your weak areas will show here.", style="Muted.TLabel").pack(anchor="w")
-        ttk.Button(self, text="← Home", command=app.show_home).pack(anchor="w", pady=8)
-
-    def open(self, tree):
-        sel = tree.selection()
+    def selected(self):
+        sel = self.tree.selection()
         if not sel:
+            messagebox.showinfo(APP_TITLE, "Select an attempt in the list first.")
+            return None
+        return self.rows[sel[0]]
+
+    def open(self):
+        rec = self.selected()
+        if rec and rec.get("results"):
+            self.app.switch(ResultView, rec, Path(rec["folder"]) / "Result_Report.html"
+                            if rec.get("folder") and (Path(rec["folder"]) / "Result_Report.html").exists() else None)
+
+    def retake(self):
+        rec = self.selected()
+        if not rec:
             return
-        rec = self.rows[sel[0]]
-        rep = Path(rec.get("folder") or ".") / "Result_Report.html"
-        if rec.get("folder") and rep.exists():
-            webbrowser.open(rep.as_uri())
-        elif rec.get("results"):
-            self.app.switch(ResultView(self.app, rec, None))
+        if rec.get("mode") == "Shortcut quiz":
+            self.app.switch(QuizView, make_quiz(20))
+        else:
+            self.app.start(rec.get("spec") or {})
+
+    def delete(self):
+        rec = self.selected()
+        if not rec:
+            return
+        has_folder = rec.get("folder") and Path(rec["folder"]).exists()
+        msg = f"Delete '{rec['title']}' (attempt {rec.get('attempt', '')}) from your history?"
+        if has_folder:
+            msg += f"\n\nIts folder and files will also be deleted:\n{rec['folder']}"
+        if messagebox.askyesno(APP_TITLE, msg, icon="warning"):
+            delete_attempt(rec)
+            self.app.switch(HistoryView)
 
 
 def main():
