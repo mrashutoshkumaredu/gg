@@ -285,7 +285,7 @@ class Home(ctk.CTkFrame):
         save_settings(s)
         if self.strict.get():
             messagebox.showinfo(APP_TITLE, "Strict exam mode is ON.\n\nSection practice and drills will not show "
-                                           "'Check this task' or model answers until you submit, like the real exam.")
+                                           "'Check task' or model answers until you submit, like the real exam.")
 
     def mode_card(self, grid, r, c, icon, colour, title, desc):
         k = card(grid)
@@ -355,7 +355,7 @@ HELP_TEXT = """How it works
 
 Retaking a test makes a new 'Attempt' folder with NEW names and numbers, so you cannot just remember the answers. Your old work and score are kept. 'Fix & recheck' lets you correct the same files and mark them again.
 
-Strict exam mode hides 'Check this task' and model answers until you submit. Copying the passages you must type is blocked.
+Strict exam mode hides 'Check task' and model answers until you submit. Copying the passages you must type is blocked.
 
 'Instructions in Hindi' opens the question paper in English and Hindi in your browser.
 
@@ -489,7 +489,8 @@ class TestView(ctk.CTkFrame):
         label(row, title, 18, "bold").pack(side="left")
         pill(row, f"Attempt {self.attempt}", NAVY_SOFT, NAVY).pack(side="left", padx=10)
         pill(row, mode, "#FFF1E0", "#9A4D00").pack(side="left")
-        flink = ctk.CTkLabel(left, text=f"Folder: {self.folder}", font=F(11),
+        rel = self.folder.relative_to(default_root()) if default_root() in self.folder.parents else self.folder
+        flink = ctk.CTkLabel(left, text=f"Folder: …\\{rel}  (click to open)", font=F(11),
                              text_color=MUTED, cursor="hand2")
         flink.pack(anchor="w")
         flink.bind("<Button-1>", lambda e: open_path(self.folder))
@@ -501,8 +502,7 @@ class TestView(ctk.CTkFrame):
         self.topmost = tk.BooleanVar(value=False)
         ctk.CTkSwitch(top, text="Keep on top", variable=self.topmost, font=F(12), progress_color=NAVY,
                       command=lambda: app.attributes("-topmost", self.topmost.get())).pack(side="right", padx=8)
-        btn(top, "Open folder", lambda: open_path(self.folder), "ghost", width=110).pack(side="right", padx=4)
-        btn(top, "Instructions in Hindi", self.hindi, "ghost", width=170).pack(side="right", padx=4)
+
 
         # ---- body
         body = ctk.CTkFrame(self, fg_color="transparent")
@@ -543,14 +543,16 @@ class TestView(ctk.CTkFrame):
 
         btns = ctk.CTkFrame(main, fg_color="transparent")
         btns.pack(fill="x", padx=20, pady=14)
-        self.b_starter = btn(btns, "Open starter file", self.open_starter, "ghost", width=150)
+        btn(btns, "Open folder", lambda: open_path(self.folder), "ghost", width=110).pack(side="left")
+        btn(btns, "In Hindi", self.hindi, "ghost", width=100).pack(side="left", padx=8)
+        self.b_starter = btn(btns, "Starter file", self.open_starter, "ghost", width=110)
         self.b_starter.pack(side="left")
         if allow_check:
-            btn(btns, "Check this task now", self.check_one, width=180).pack(side="left", padx=8)
+            btn(btns, "Check task", self.check_one, width=110).pack(side="left", padx=8)
         if show_hints:
-            btn(btns, "Show model answer", self.hint, "ghost", width=160).pack(side="left")
-        btn(btns, "Next →", lambda: self.move(1), "ghost", width=90).pack(side="right")
-        btn(btns, "← Previous", lambda: self.move(-1), "ghost", width=110).pack(side="right", padx=8)
+            btn(btns, "Model answer", self.hint, "ghost", width=120).pack(side="left")
+        btn(btns, "→", lambda: self.move(1), "ghost", width=44).pack(side="right")
+        btn(btns, "←", lambda: self.move(-1), "ghost", width=44).pack(side="right", padx=6)
 
         # ---- activity
         act = card(self)
@@ -571,7 +573,7 @@ class TestView(ctk.CTkFrame):
         self.pick(self.items[0])
         self.monitor.start()
         if mode == "Fix & recheck":
-            self.monitor.log("test", "Fix & recheck: correct your files and press 'Check this task now' or Submit")
+            self.monitor.log("test", "Fix & recheck: correct your files and press 'Check task' or Submit")
         open_path(self.folder)
         self.tick()
 
@@ -878,7 +880,7 @@ class ResultPopup(ctk.CTkToplevel):
             tree.selection_set(first)
         bar = ctk.CTkFrame(self, fg_color="transparent")
         bar.pack(fill="x", padx=14, pady=12)
-        label(bar, "Fix the mistakes, save, and press 'Check this task now' again.", 12, color=MUTED).pack(side="left")
+        label(bar, "Fix the mistakes, save, and press 'Check task' again.", 12, color=MUTED).pack(side="left")
         btn(bar, "Close", self.destroy, width=100).pack(side="right")
 
 
