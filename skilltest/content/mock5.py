@@ -4,6 +4,7 @@ from .. import excel as X
 from .. import ppt as P
 from .. import word as W
 from ..core import Paper, Task
+from . import variants as V
 from .starters import text_file, xlsx
 
 # ------------------------------------------------------------------ WORD
@@ -57,7 +58,9 @@ w1 = Task(
     ],
 )
 
-Q_ITEMS = [("Desktop Computer", 5, 52000), ("Laser Printer", 2, 18500), ("UPS 1KVA", 5, 4600), ("Scanner", 1, 21500)]
+Q_ITEMS = V.unique_totals(lambda: [(n, V.num(q, 0.6, low=1), V.num(r, 0.15, step=100)) for n, q, r in
+                                   [("Desktop Computer", 5, 52000), ("Laser Printer", 2, 18500), ("UPS 1KVA", 5, 4600),
+                                    ("Scanner", 1, 21500)]], key=lambda r: r[1] * r[2])
 Q_TOTAL = sum(q * r for _, q, r in Q_ITEMS)
 Q_NOTE = "Prices are inclusive of GST and valid for thirty days."
 
@@ -77,7 +80,7 @@ w2 = Task(
         C.file_saved("Quotation.docx", 1),
         W.bold("QUOTATION", 0.5), W.font_size("QUOTATION", 20, 0.5), W.alignment("QUOTATION", "Center", 0.5),
         W.table_size(6, 4, 1.5),
-        W.table_has([n for n, _, _ in Q_ITEMS] + ["260000", "37000"], 2),
+        W.table_has([n for n, _, _ in Q_ITEMS] + [str(q * r) for _, q, r in Q_ITEMS[:2]], 2),
         W.symbol("₹", 1),
         W.table_sorted(3, desc=True, numeric=True, marks=2),
         W.table_formula("SUM", Q_TOTAL, 2.5),
@@ -98,9 +101,11 @@ w2 = Task(
 
 # ------------------------------------------------------------------ EXCEL
 
-STUD = [(101, "Asha", 88, 79), (102, "Bharat", 45, 52), (103, "Chandni", 67, 71), (104, "Dev", 33, 29),
-        (105, "Ekta", 92, 95), (106, "Feroz", 58, 49), (107, "Gauri", 74, 81), (108, "Hitesh", 39, 44),
-        (109, "Isha", 61, 66), (110, "Jatin", 80, 72)]
+_STUD0 = [(101, "Asha", 88, 79), (102, "Bharat", 45, 52), (103, "Chandni", 67, 71), (104, "Dev", 33, 29),
+          (105, "Ekta", 92, 95), (106, "Feroz", 58, 49), (107, "Gauri", 74, 81), (108, "Hitesh", 39, 44),
+          (109, "Isha", 61, 66), (110, "Jatin", 80, 72)]
+STUD = [(r, n, V.num(a, 0.25, low=10, high=100), V.num(b, 0.25, low=10, high=100))
+        for (r, _, a, b), n in zip(_STUD0, V.names([s[1] for s in _STUD0]))]
 
 
 def _pct(r):
@@ -155,8 +160,9 @@ e1 = Task(
     ],
 )
 
-WAGES = [("Murugan", 26, 650), ("Savitri", 0, 600), ("Prakash", 24, 650), ("Rekha", 22, 600), ("Tarun", 0, 700),
-         ("Uma", 25, 650)]
+WAGES = [(n, V.num(d, 0.15, high=31), V.choice([600, 650, 700, 750], w)) for (_, d, w), n in
+         zip([("Murugan", 26, 650), ("Savitri", 0, 600), ("Prakash", 24, 650), ("Rekha", 22, 600), ("Tarun", 0, 700),
+              ("Uma", 25, 650)], V.names(["Murugan", "Savitri", "Prakash", "Rekha", "Tarun", "Uma"]))]
 
 e2 = Task(
     id="M5-E2", app="excel", title="Payroll Sheets", file="Payroll.xlsx", minutes=12,

@@ -1,6 +1,7 @@
 """Core data model: tasks, checks, file lookup and marking."""
 from __future__ import annotations
 
+import math
 import os
 import re
 import traceback
@@ -67,6 +68,7 @@ class CheckResult:
     expected: str
     how: str
     topic: str
+    frac: float = 0.0          # share of the marks earned (part marks)
 
     def to_dict(self):
         return self.__dict__.copy()
@@ -165,6 +167,18 @@ class Ctx:
         return self._load("ppt", name)
 
 
+def part_score(ok) -> float:
+    """A check returns True/False, or a number 0..1 when part of the work is right."""
+    if isinstance(ok, bool) or ok is None:
+        return 1.0 if ok else 0.0
+    return max(0.0, min(1.0, float(ok)))
+
+
+def partial(done, total):
+    """Helper for checks: share of items done, as a number for part marks."""
+    return (done / total) if total else 0.0
+
+
 def grade_task(task: Task, folder: Path, known_names=()) -> TaskResult:
     ctx = Ctx(folder, task, known_names)
     out = []
@@ -177,8 +191,9 @@ def grade_task(task: Task, folder: Path, known_names=()) -> TaskResult:
             ok, found = False, f"Could not read this part of the file ({type(e).__name__}: {e})"
             if os.environ.get("SKILLTEST_DEBUG"):
                 traceback.print_exc()
-        out.append(CheckResult(c.desc, c.marks, c.marks if ok else 0.0, bool(ok), str(found),
-                               c.expected, c.how, c.topic))
+        frac = part_score(ok)
+        got = c.marks if frac >= 1 else math.floor(c.marks * frac * 4) / 4      # part marks in steps of 0.25
+        out.append(CheckResult(c.desc, c.marks, got, frac >= 1, str(found), c.expected, c.how, c.topic, frac))
     if ctx.notes:
         out.insert(0, CheckResult("Note", 0, 0, False, " ".join(ctx.notes), "", "", ""))
     got = round(sum(r.got for r in out), 2)

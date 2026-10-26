@@ -40,5 +40,27 @@ def run():
     return problems
 
 
+def test_variants():
+    """Retake papers (new numbers) keep 100 marks, and their marking uses their own numbers."""
+    from skilltest.content import build_paper
+    from skilltest.content import mock1 as M
+    p = build_paper("mock1", 7)
+    e2 = next(t for t in p.tasks if t.id == "M1-E2")
+    import sys as _s
+    v = _s.modules["skilltest.content.mock1_v7"]
+    assert v.REGION_TOTAL != M.REGION_TOTAL, "variant should have different numbers"
+    for pid in ("mock1", "mock2", "mock3", "mock4", "mock5"):
+        for seed in (3, 11):
+            q = build_paper(pid, seed)
+            assert sum(t.marks for t in q.tasks) == 100
+    from skilltest.content.hindi import HI
+    for t in [t for p in PAPERS for t in p.tasks] + DRILLS:
+        n = sum(1 for line in t.instructions if not line.startswith("   "))
+        assert len(HI.get(t.id, [])) == n, f"Hindi lines for {t.id}: {len(HI.get(t.id, []))} instead of {n}"
+    print("variants and Hindi OK")
+
+
 if __name__ == "__main__":
-    sys.exit(1 if run() else 0)
+    bad = run()
+    test_variants()
+    sys.exit(1 if bad else 0)

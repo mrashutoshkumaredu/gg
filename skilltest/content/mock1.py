@@ -4,6 +4,7 @@ from .. import excel as X
 from .. import ppt as P
 from .. import word as W
 from ..core import Paper, Task
+from . import variants as V
 from .starters import xlsx
 
 # ------------------------------------------------------------------ WORD
@@ -62,9 +63,11 @@ w1 = Task(
     ],
 )
 
-STAFF = [("1", "Ravi Kumar", "Assistant", "35400"), ("2", "Anita Sharma", "UDC", "25500"),
-         ("3", "Mohan Das", "JPA", "21700"), ("4", "Deepa Nair", "Stenographer", "25500"),
-         ("5", "Suresh Babu", "Assistant", "35400")]
+PAY = ["21700", "25500", "29200", "35400", "44900"]
+_SN = V.names(["Ravi Kumar", "Anita Sharma", "Mohan Das", "Deepa Nair", "Suresh Babu"], full=True)
+STAFF = [(str(i + 1), _SN[i], post, V.choice(PAY, pay)) for i, (post, pay) in enumerate(
+    [("Assistant", "35400"), ("UDC", "25500"), ("JPA", "21700"), ("Stenographer", "25500"), ("Assistant", "35400")])]
+STAFF_TOTAL = sum(int(r[3]) for r in STAFF)
 S_TITLE = "STAFF DETAILS - ACCOUNTS SECTION"
 
 w2 = Task(
@@ -88,11 +91,11 @@ w2 = Task(
         C.file_saved("Staff.docx", 1),
         W.font_name(S_TITLE, "Arial", 1), W.font_size(S_TITLE, 14, 1), W.bold(S_TITLE, 1),
         W.table_size(7, 4, 1),
-        W.table_has([r[1] for r in STAFF] + ["Stenographer", "21700", "Basic Pay"], 1.5),
+        W.table_has([r[1] for r in STAFF] + ["Stenographer", STAFF[2][3], "Basic Pay"], 1.5),
         W.symbol("₹", 1),
         W.table_sorted(1, marks=2),
         W.table_merged(1),
-        W.table_formula("SUM", 143500, 2),
+        W.table_formula("SUM", STAFF_TOTAL, 2),
         W.bold("Designation", 1),
         W.table_shading(1), W.table_borders(0.5),
         W.orientation("landscape", 1),
@@ -104,7 +107,7 @@ w2 = Task(
         "For ₹: Insert > Symbol > More Symbols > Subset: Currency Symbols > ₹ > Insert.",
         "Click in the table > Table Tools Layout > Sort > Sort by: Name, Type: Text, Ascending; My list has: Header row > OK.",
         "Click in the last row > Layout > Insert Below. Select its first 3 cells > Merge Cells > type Total.",
-        "Click the last cell > Layout > Formula > =SUM(ABOVE) > OK (it shows 143500).",
+        f"Click the last cell > Layout > Formula > =SUM(ABOVE) > OK (it shows {STAFF_TOTAL}).",
         "Select the header row > Ctrl+B > Table Design > Shading > pick a colour. Borders > All Borders.",
         "Layout > Orientation > Landscape.",
         "Insert > Header > Blank > type Confidential > Close Header and Footer.",
@@ -114,9 +117,12 @@ w2 = Task(
 
 # ------------------------------------------------------------------ EXCEL
 
-MARKS = [("Aarav", 78, 85, 69), ("Bhavna", 45, 38, 52), ("Chetan", 92, 88, 95), ("Divya", 35, 30, 41),
-         ("Eshan", 67, 72, 58), ("Farah", 55, 61, 49), ("Gopal", 28, 35, 33), ("Harini", 81, 79, 90),
-         ("Imran", 60, 58, 66), ("Jyoti", 73, 69, 77)]
+_MARKS0 = [("Aarav", 78, 85, 69), ("Bhavna", 45, 38, 52), ("Chetan", 92, 88, 95), ("Divya", 35, 30, 41),
+           ("Eshan", 67, 72, 58), ("Farah", 55, 61, 49), ("Gopal", 28, 35, 33), ("Harini", 81, 79, 90),
+           ("Imran", 60, 58, 66), ("Jyoti", 73, 69, 77)]
+_MN = V.names([r[0] for r in _MARKS0])
+MARKS = V.unique_totals(lambda: [(n, *(V.num(x, 0.3, low=15, high=99) for x in r[1:])) for n, r in zip(_MN, _MARKS0)],
+                        key=lambda r: r[1] + r[2] + r[3])
 TOTALS = {n: a + b + c for n, a, b, c in MARKS}
 
 
@@ -181,7 +187,7 @@ SALES = []
 for i in range(20):
     reg = REGIONS[i % 4]
     prod = PRODUCTS[(i * 3) % 5]
-    units = [3, 5, 2, 8, 4, 6, 1, 7, 2, 5][i % 10] + (i // 10)
+    units = V.num([3, 5, 2, 8, 4, 6, 1, 7, 2, 5][i % 10] + (i // 10), 0.6, low=1)
     SALES.append((reg, ["Jan", "Feb", "Mar", "Apr"][i // 5], prod, units, RATES[prod]))
 REGION_TOTAL = {r: sum(u * rt for rg, m, p, u, rt in SALES if rg == r) for r in REGIONS}
 

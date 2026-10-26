@@ -15,7 +15,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.worksheet.datavalidation import DataValidation
 
 from helpers import recalc_xlsx
-from skilltest.content import mock2, mock3, mock4, mock5
+from skilltest.content import build_paper, mock2, mock3, mock4, mock5
 from skilltest.core import grade_task, all_file_names
 from skilltest.session import prepare_folder
 
@@ -125,14 +125,16 @@ def run():
     tmp = Path(tempfile.mkdtemp())
     bad = 0
     try:
-        for mod, tid, solve in ((mock2, "M2-E1", m2e1), (mock3, "M3-E1", m3e1), (mock4, "M4-E1", m4e1),
-                                (mock5, "M5-E1", m5e1), (mock5, "M5-E2", m5e2)):
-            task = next(t for t in mod.PAPER.tasks if t.id == tid)
-            f = tmp / tid
+        for seed in (0, 9):          # the original paper and a retake with new numbers
+          for mod, tid, solve in ((mock2, "M2-E1", m2e1), (mock3, "M3-E1", m3e1), (mock4, "M4-E1", m4e1),
+                                  (mock5, "M5-E1", m5e1), (mock5, "M5-E2", m5e2)):
+            paper = build_paper(mod.PAPER.id, seed)
+            task = next(t for t in paper.tasks if t.id == tid)
+            f = tmp / f"{tid}_{seed}"
             prepare_folder(f, [task])
             solve(f)
-            r = grade_task(task, f, all_file_names(mod.PAPER.tasks))
-            print(f"{tid}: {r.got}/{r.marks}")
+            r = grade_task(task, f, all_file_names(paper.tasks))
+            print(f"{tid} (seed {seed}): {r.got}/{r.marks}")
             for c in r.checks:
                 if not c.ok:
                     bad += 1

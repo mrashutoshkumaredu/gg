@@ -8,7 +8,7 @@ from lxml import etree
 from pptx import Presentation
 from pptx.util import Emu
 
-from .core import Check, norm, short
+from .core import Check, norm, partial, short
 
 T_CREATE = "Creating a presentation"
 T_FMT = "Formatting a presentation"
@@ -119,7 +119,7 @@ def text_on(n, texts, marks=1.0, file=None, what=None):
     def fn(ctx):
         t = norm(ctx.ppt(file).slide_text(n))
         miss = [x for x in texts if norm(x) not in t]
-        return (not miss), ("All text present" if not miss else "Missing: " + ", ".join(short(m, 25) for m in miss[:4]))
+        return partial(len(texts) - len(miss), len(texts)), ("All text present" if not miss else "Missing: " + ", ".join(short(m, 25) for m in miss[:4]))
     return Check(what or f"Slide {n} has the given text", marks, fn, expected="; ".join(short(x, 30) for x in texts[:4]),
                  how="Click 'Click to add text' and type each point; press Enter for a new bullet.", topic="adding text")
 
@@ -235,7 +235,7 @@ def table_text(n, texts, marks=1.0, file=None):
             if sh.has_table:
                 t = norm(" | ".join(c.text for r in sh.table.rows for c in r.cells))
                 miss = [x for x in texts if norm(x) not in t]
-                return (not miss), ("All entries present" if not miss else "Missing: " + ", ".join(miss[:4]))
+                return partial(len(texts) - len(miss), len(texts)), ("All entries present" if not miss else "Missing: " + ", ".join(miss[:4]))
         return False, "No table"
     return Check(f"Table data on slide {n} entered", marks, fn, expected=", ".join(texts[:5]),
                  how="Click in each cell and type; Tab moves to the next cell.", topic=T_GFX)
@@ -267,8 +267,9 @@ def smartart(n, marks=1.0, file=None):
 def transition(which="all", marks=1.0, file=None):
     def fn(ctx):
         d = ctx.ppt(file)
-        bad = [n for n in _slides(d, which) if "transition" not in d.slide_xml(n)]
-        return (not bad), ("Transition on every slide asked" if not bad else "No transition on slide(s) " + ", ".join(map(str, bad)))
+        want = _slides(d, which)
+        bad = [n for n in want if "transition" not in d.slide_xml(n)]
+        return partial(len(want) - len(bad), len(want)), ("Transition on every slide asked" if not bad else "No transition on slide(s) " + ", ".join(map(str, bad)))
     return Check(f"Transition on {_desc_slides(which)}", marks, fn, expected="A transition effect",
                  how="Transitions tab > pick an effect (e.g. Fade) > click Apply To All.", topic="Slide transition")
 
@@ -309,8 +310,9 @@ def footer(text, which="all", marks=1.0, file=None):
 def slide_numbers(which="all", marks=1.0, file=None):
     def fn(ctx):
         d = ctx.ppt(file)
-        bad = [n for n in _slides(d, which) if not any("SLIDE_NUMBER" in t for t, _ in _placeholder_types(d.slide(n)))]
-        return (not bad), ("Slide numbers shown" if not bad else "No slide number on slide(s) " + ", ".join(map(str, bad[:6])))
+        want = _slides(d, which)
+        bad = [n for n in want if not any("SLIDE_NUMBER" in t for t, _ in _placeholder_types(d.slide(n)))]
+        return partial(len(want) - len(bad), len(want)), ("Slide numbers shown" if not bad else "No slide number on slide(s) " + ", ".join(map(str, bad[:6])))
     return Check(f"Slide numbers on {_desc_slides(which)}", marks, fn, expected="Slide number",
                  how="Insert > Header & Footer > tick Slide number > Apply to All.", topic="adding header & footer")
 
@@ -318,8 +320,9 @@ def slide_numbers(which="all", marks=1.0, file=None):
 def date_shown(which="all", marks=1.0, file=None):
     def fn(ctx):
         d = ctx.ppt(file)
-        bad = [n for n in _slides(d, which) if not any("DATE" in t for t, _ in _placeholder_types(d.slide(n)))]
-        return (not bad), ("Date shown" if not bad else "No date on slide(s) " + ", ".join(map(str, bad[:6])))
+        want = _slides(d, which)
+        bad = [n for n in want if not any("DATE" in t for t, _ in _placeholder_types(d.slide(n)))]
+        return partial(len(want) - len(bad), len(want)), ("Date shown" if not bad else "No date on slide(s) " + ", ".join(map(str, bad[:6])))
     return Check(f"Date on {_desc_slides(which)}", marks, fn, expected="Date and time",
                  how="Insert > Header & Footer > tick Date and time > Apply to All.", topic="adding header & footer")
 

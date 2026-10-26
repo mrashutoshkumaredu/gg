@@ -42,8 +42,27 @@ file is not signed.
 ## Retaking a test
 
 Every retake makes a new `Attempt` folder inside the same test folder (Attempt 1, Attempt 2 …), so your old
-work and score are kept for comparison. Use **Retake this test** on the result screen, or open
+work and score are kept for comparison. Attempt 1 uses the original paper; every retake uses **new names and
+numbers**, so answers cannot simply be remembered. Use **Retake (new numbers)** on the result screen, or open
 **My progress & retakes** to retake, open or delete any past attempt. Deleting an attempt also removes its folder.
+
+**Fix & recheck** reopens the same files so you can correct the mistakes and have them marked again.
+
+## Fair marking
+
+- Part marks: for example, if 3 of 4 bullets are right, or 8 of 10 formulas, you get that share of the marks.
+- Typing: each mistake costs 10% of that passage's marks, and the result lists every wrong, missing or extra word.
+- Copying the passages to be typed is blocked, both in the app and on the clipboard.
+- **Strict exam mode** (switch on the Home screen) hides "Check this task" and model answers until you submit.
+- **Report wrong marking** on the result screen makes a zip of the files and result to send to the developer.
+
+## Learning and teachers
+
+- **Practise →** next to each weak area starts the matching drills.
+- **Score trend** chart on the My Progress screen.
+- **Instructions in Hindi** opens the question paper in English and Hindi in the browser.
+- **Students**: add several students on the Home screen; each has separate folders, scores and weak areas.
+- **Export all results to Excel** (My Progress screen) gives a sheet of every attempt by every student, plus weak topics.
 
 ## Run from source (optional)
 

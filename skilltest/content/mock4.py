@@ -4,6 +4,7 @@ from .. import excel as X
 from .. import ppt as P
 from .. import word as W
 from ..core import Paper, Task
+from . import variants as V
 from .starters import docx_with, text_file, xlsx
 
 # ------------------------------------------------------------------ WORD
@@ -106,8 +107,14 @@ w2 = Task(
 
 # ------------------------------------------------------------------ EXCEL
 
-CONS = [("Faisal", 5520, 5784), ("Anjali", 4512, 4630), ("Hari", 2200, 2460), ("Chitra", 1210, 1295),
-        ("Esther", 9050, 9122), ("Balaji", 7801, 8015), ("Geeta", 6400, 6512), ("Dinesh", 3388, 3611)]
+_CONS0 = [("Faisal", 5520, 5784), ("Anjali", 4512, 4630), ("Hari", 2200, 2460), ("Chitra", 1210, 1295),
+          ("Esther", 9050, 9122), ("Balaji", 7801, 8015), ("Geeta", 6400, 6512), ("Dinesh", 3388, 3611)]
+CONS = []
+for (n0, p0, c0), n in zip(_CONS0, V.names([r[0] for r in _CONS0])):
+    p = V.num(p0, 0.3)
+    CONS.append((n, p, p + V.num(c0 - p0, 0.6, low=20)))
+if [r[0] for r in CONS] == sorted(r[0] for r in CONS):
+    CONS.reverse()                                   # the sorting task needs unsorted names
 
 
 def _units(r):

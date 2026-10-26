@@ -4,6 +4,7 @@ from .. import excel as X
 from .. import ppt as P
 from .. import word as W
 from ..core import Paper, Task
+from . import variants as V
 from .starters import docx_with, xlsx
 
 # ------------------------------------------------------------------ WORD
@@ -105,10 +106,10 @@ w2 = Task(
 
 # ------------------------------------------------------------------ EXCEL
 
-NAMES = ["Anil", "Bindu", "Charan", "Deepika", "Elango", "Fathima", "Girish", "Hema", "Irfan", "Janaki"]
+NAMES = V.names(["Anil", "Bindu", "Charan", "Deepika", "Elango", "Fathima", "Girish", "Hema", "Irfan", "Janaki"])
 ATT = []
 for i, n in enumerate(NAMES):
-    row = [n] + [("A" if (d * (i + 3)) % (5 + i % 4) == 0 else "P") for d in range(1, 21)]
+    row = [n] + [("A" if (d * (i + 3) + V.SEED) % (5 + (i + V.SEED) % 4) == 0 else "P") for d in range(1, 21)]
     ATT.append(row)
 PRESENT = {r[0]: r[1:].count("P") for r in ATT}
 
@@ -158,12 +159,14 @@ e1 = Task(
 )
 
 HEADS = ["Travel", "Stationery", "Electricity", "Telephone"]
-QDATA = {"Q1": [42000, 8500, 61000, 7200], "Q2": [38500, 9100, 58000, 6900], "Q3": [45500, 7800, 66000, 7400]}
+QDATA = {q: [V.num(x, 0.2, step=100) for x in v] for q, v in
+         {"Q1": [42000, 8500, 61000, 7200], "Q2": [38500, 9100, 58000, 6900], "Q3": [45500, 7800, 66000, 7400]}.items()}
 QTOTAL = {h: sum(QDATA[q][i] for q in QDATA) for i, h in enumerate(HEADS)}
 BILLS = [("Library", "Books", 18500), ("Accounts", "Calculator", 2400), ("Admin", "Chairs", 32000),
          ("Library", "Racks", 26000), ("Purchase", "Files", 3500), ("Accounts", "Ledger", 1800),
          ("Admin", "Water Cooler", 21000), ("Purchase", "Printer", 14500), ("Library", "Journals", 9500),
          ("Accounts", "Software", 12000), ("Admin", "Curtains", 7600), ("Purchase", "Scanner", 9900)]
+BILLS = V.shuffled([(d, i, V.num(a, 0.3, step=100)) for d, i, a in BILLS])
 DEPT_TOTAL = {}
 for d, _, a in BILLS:
     DEPT_TOTAL[d] = DEPT_TOTAL.get(d, 0) + a

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import queue
+import random
 import subprocess
 import sys
 import time
@@ -14,13 +15,15 @@ from tkinter import filedialog, messagebox, ttk
 import customtkinter as ctk
 
 from . import __version__
-from .content import PAPERS
+from .content import PAPERS, build_paper
 from .content.drills import DRILLS
 from .core import APP_LABEL, all_file_names, grade_task, grade_tasks
 from .monitor import APP_NAME, Monitor
-from .report import build as build_report
-from .session import (default_root, delete_attempt, fmt_secs, load_history, load_settings, make_record,
-                      new_attempt_folder, prepare_folder, save_attempt, save_settings, stats, weak_topics)
+from .report import build as build_report, build_instructions
+from .session import (DEFAULT_STUDENT, current_student, default_root, delete_attempt, export_results, fmt_secs,
+                      load_history, load_settings, make_problem_report, make_record, new_attempt_folder,
+                      next_attempt_number, prepare_folder, remove_student, save_attempt, save_settings, set_student,
+                      stats, students, weak_topics)
 from .shortcuts import make_quiz
 
 APP_TITLE = "ISRO Skill Test Practice"
@@ -139,7 +142,16 @@ class App(ctk.CTk):
         self.body = ctk.CTkFrame(self, fg_color=BG, corner_radius=0)
         self.body.pack(fill="both", expand=True)
         self.frame = None
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.show_home()
+
+    def on_close(self):
+        f = self.frame
+        if isinstance(f, TestView) and not f.done:
+            if not messagebox.askyesno(APP_TITLE, "A test is running.\n\nSubmit it now and close the app?"):
+                return
+            f.finish(quiet=True)
+        self.destroy()
 
     def switch(self, cls, *args, **kw):
         if self.frame is not None:
@@ -151,25 +163,44 @@ class App(ctk.CTk):
         self.attributes("-topmost", False)
         self.switch(Home)
 
-    # one place that knows how to start any kind of test (used by Home, Retake and History)
-    def start(self, spec):
+    # one place that knows how to start any kind of test (used by Home, Retake, Fix & recheck and History)
+    def start(self, spec, recheck=None):
+        spec = dict(spec or {})
         kind = spec.get("kind")
+        strict = bool(load_settings().get("strict"))
         if kind == "mock":
             p = next(p for p in PAPERS if p.id == spec["paper"])
-            self.switch(TestView, p.tasks, f"{p.title} - Full Test", p.minutes * 60, "Full mock", False, spec)
+            title, minutes, mode = f"{p.title} - Full Test", p.minutes, "Full mock"
         elif kind == "section":
             p = next(p for p in PAPERS if p.id == spec["paper"])
-            app = spec["app"]
-            self.switch(TestView, p.section(app), f"{p.title} - {APP_SHORT[app]}", SECTION_MIN[app] * 60,
-                        "Section practice", True, spec)
+            title, minutes, mode = f"{p.title} - {APP_SHORT[spec['app']]}", SECTION_MIN[spec["app"]], "Section practice"
         elif kind == "drills":
             chosen = [d for d in DRILLS if d.id in spec["ids"]]
             title = "Drill " + chosen[0].id if len(chosen) == 1 else f"Drills ({len(chosen)})"
-            self.switch(TestView, chosen, title, sum(d.minutes for d in chosen) * 60, "Topic drills", True, spec,
-                        show_hints=True)
+            minutes, mode = sum(d.minutes for d in chosen), "Topic drills"
         else:
             messagebox.showinfo(APP_TITLE, "This attempt was made with an older version and cannot be retaken "
                                            "automatically. Start it again from the Home screen.")
+            return
+        if recheck:
+            # same folder, same numbers: fix the mistakes and mark again
+            seed = spec.get("seed", 0)
+            folder, attempt = recheck["folder"], recheck.get("attempt", 1)
+            mode, minutes, check, hints = "Fix & recheck", max(15, minutes // 2), True, True
+        else:
+            n = next_attempt_number(title)
+            seed = 0 if n == 1 else random.randint(1, 999_999)       # attempt 1 = original paper, retakes = new numbers
+            folder, attempt = None, None
+            check = hints = kind != "mock" and not strict
+        spec["seed"] = seed
+        if kind == "mock":
+            tasks = build_paper(spec["paper"], seed).tasks
+        elif kind == "section":
+            tasks = build_paper(spec["paper"], seed).section(spec["app"])
+        else:
+            tasks = chosen
+        self.switch(TestView, tasks, title, minutes * 60, mode, check, spec, show_hints=hints, folder=folder,
+                    attempt=attempt)
 
 
 # =================================================================== home
@@ -179,6 +210,18 @@ class Home(ctk.CTkFrame):
         super().__init__(parent, fg_color="transparent")
         self.app = app
         names = [p.title for p in PAPERS]
+
+        # student chooser
+        who = ctk.CTkFrame(self, fg_color="transparent")
+        who.pack(fill="x", pady=(0, 10))
+        label(who, "Student", 13, "bold", MUTED).pack(side="left")
+        self.student = option(who, students() + ["+ Add student…"], 220)
+        self.student.set(current_student())
+        self.student.configure(command=self.pick_student)
+        self.student.pack(side="left", padx=10)
+        if len(students()) > 1:
+            btn(who, "Remove", self.remove_student, "danger", width=90, height=32).pack(side="left")
+        label(who, "Each student has separate folders, scores and weak areas.", 12, color=MUTED).pack(side="left", padx=12)
 
         # stats strip
         st = stats(load_history())
@@ -229,9 +272,20 @@ class Home(ctk.CTkFrame):
         bar.pack(fill="x", pady=(14, 0))
         btn(bar, "My progress & retakes", lambda: app.switch(HistoryView), "ghost", width=200).pack(side="left")
         btn(bar, "How it works", self.help, "ghost", width=130).pack(side="left", padx=8)
+        self.strict = tk.BooleanVar(value=bool(load_settings().get("strict")))
+        ctk.CTkSwitch(bar, text="Strict exam mode", variable=self.strict, font=F(12), progress_color=NAVY,
+                      command=self.toggle_strict).pack(side="left", padx=10)
         btn(bar, "Change", self.change_root, "ghost", width=90).pack(side="right")
         self.root_lbl = label(bar, f"Test folders: {default_root()}", 12, color=MUTED)
         self.root_lbl.pack(side="right", padx=10)
+
+    def toggle_strict(self):
+        s = load_settings()
+        s["strict"] = self.strict.get()
+        save_settings(s)
+        if self.strict.get():
+            messagebox.showinfo(APP_TITLE, "Strict exam mode is ON.\n\nSection practice and drills will not show "
+                                           "'Check this task' or model answers until you submit, like the real exam.")
 
     def mode_card(self, grid, r, c, icon, colour, title, desc):
         k = card(grid)
@@ -245,6 +299,25 @@ class Home(ctk.CTkFrame):
         k.controls = ctk.CTkFrame(k, fg_color="transparent")
         k.controls.pack(side="bottom", fill="x", padx=20, pady=18)
         return k
+
+    def pick_student(self, value):
+        if value == "+ Add student…":
+            name = ctk.CTkInputDialog(title="Add student", text="Student name:").get_input()
+            name = (name or "").strip()
+            if not name:
+                self.student.set(current_student())
+                return
+            set_student(name)
+        else:
+            set_student(value)
+        self.app.show_home()
+
+    def remove_student(self):
+        name = current_student()
+        if messagebox.askyesno(APP_TITLE, f"Remove '{name}' from the student list?\n\nTheir saved scores and folders "
+                                          "are kept; add the same name again to see them."):
+            remove_student(name)
+            self.app.show_home()
 
     def start_mock(self):
         p = PAPERS[[x.title for x in PAPERS].index(self.mock.get())]
@@ -280,7 +353,11 @@ HELP_TEXT = """How it works
 5. Press Submit (or let the timer run out). Save your files first.
 6. Each point is marked. For every mistake you see what was found, what was expected and how to do it, plus a model answer.
 
-Retaking a test makes a new 'Attempt' folder, so your old work and score are kept. Use 'My progress & retakes' to retake or delete old attempts.
+Retaking a test makes a new 'Attempt' folder with NEW names and numbers, so you cannot just remember the answers. Your old work and score are kept. 'Fix & recheck' lets you correct the same files and mark them again.
+
+Strict exam mode hides 'Check this task' and model answers until you submit. Copying the passages you must type is blocked.
+
+'Instructions in Hindi' opens the question paper in English and Hindi in your browser.
 
 Tip: tick 'Keep on top' and place this window beside Office."""
 
@@ -377,7 +454,8 @@ class TaskItem(ctk.CTkFrame):
 
 
 class TestView(ctk.CTkFrame):
-    def __init__(self, parent, app: App, tasks, title, seconds, mode, allow_check, spec, show_hints=False):
+    def __init__(self, parent, app: App, tasks, title, seconds, mode, allow_check, spec, show_hints=False,
+                 folder=None, attempt=None):
         super().__init__(parent, fg_color="transparent")
         self.app = app
         self.tasks = tasks
@@ -391,8 +469,13 @@ class TestView(ctk.CTkFrame):
         self.events_q = queue.Queue()
         self.cur = 0
 
-        self.folder, self.attempt = new_attempt_folder(title)
+        if folder:                                   # Fix & recheck: keep working in the same folder
+            self.folder, self.attempt = Path(folder), attempt
+        else:
+            self.folder, self.attempt = new_attempt_folder(title)
         prepare_folder(self.folder, tasks)
+        self.passages = [l.strip() for t in tasks for l in t.instructions if l.startswith("   ") and len(l.strip()) > 40]
+        self.clip_warned = False
         self.known = all_file_names(tasks)
         self.monitor = Monitor(self.folder, on_event=self.events_q.put)
 
@@ -419,6 +502,7 @@ class TestView(ctk.CTkFrame):
         ctk.CTkSwitch(top, text="Keep on top", variable=self.topmost, font=F(12), progress_color=NAVY,
                       command=lambda: app.attributes("-topmost", self.topmost.get())).pack(side="right", padx=8)
         btn(top, "Open folder", lambda: open_path(self.folder), "ghost", width=110).pack(side="right", padx=4)
+        btn(top, "Instructions in Hindi", self.hindi, "ghost", width=170).pack(side="right", padx=4)
 
         # ---- body
         body = ctk.CTkFrame(self, fg_color="transparent")
@@ -455,6 +539,7 @@ class TestView(ctk.CTkFrame):
         self.text.tag_config("quote", foreground="#334", lmargin1=30, lmargin2=30, background="#F6F8FC")
         self.text.tag_config("num", foreground=NAVY)
         self.text.tag_config("hint", foreground="#7A5B00")
+        self.block_copy(self.text)
 
         btns = ctk.CTkFrame(main, fg_color="transparent")
         btns.pack(fill="x", padx=20, pady=14)
@@ -485,8 +570,50 @@ class TestView(ctk.CTkFrame):
 
         self.pick(self.items[0])
         self.monitor.start()
+        if mode == "Fix & recheck":
+            self.monitor.log("test", "Fix & recheck: correct your files and press 'Check this task now' or Submit")
         open_path(self.folder)
         self.tick()
+
+    # ---------- no copying of the passages to be typed
+    def block_copy(self, box):
+        t = box._textbox
+        t.configure(selectbackground=CARD, selectforeground=INK, inactiveselectbackground=CARD, exportselection=False)
+        for ev in ("<Control-c>", "<Control-C>", "<<Copy>>", "<Control-Insert>", "<Button-3>", "<B1-Motion>",
+                   "<Double-Button-1>", "<Triple-Button-1>", "<Control-a>", "<Control-A>", "<Shift-Left>",
+                   "<Shift-Right>", "<Shift-Up>", "<Shift-Down>"):
+            t.bind(ev, lambda e: "break")
+
+    def guard_clipboard(self):
+        """If a passage to be typed has been copied (from anywhere), empty the clipboard."""
+        if not self.passages:
+            return
+        try:
+            clip = self.app.clipboard_get()
+        except Exception:
+            return
+        c = " ".join(clip.split())
+        if len(c) < 40:
+            return
+        if any(p[i:i + 40] in c for p in self.passages for i in range(0, max(1, len(p) - 40), 40)):
+            try:
+                self.app.clipboard_clear()
+                self.app.clipboard_append("")
+            except Exception:
+                pass
+            self.monitor.log("test", "Copied passage removed from the clipboard (typing must be done by hand)")
+            if not self.clip_warned:
+                self.clip_warned = True
+                Popup(self.app, "Copying not allowed", "The passage must be typed by hand.\n"
+                      "Copy-paste of the given text is blocked.", danger=True, auto_close=6000)
+
+    def hindi(self):
+        path = self.folder / "Instructions_Hindi.html"
+        try:
+            build_instructions(self.tasks, self.title_, path)
+            webbrowser.open(path.as_uri())
+        except Exception as e:
+            messagebox.showerror(APP_TITLE, f"Could not open the Hindi instructions.\n{e}")
 
     # ---------- task display
     def pick(self, item):
@@ -555,6 +682,8 @@ class TestView(ctk.CTkFrame):
             except queue.Empty:
                 break
         left = max(0, self.allowed - (time.monotonic() - self.started))
+        if int(left) % 2 == 0:
+            self.guard_clipboard()
         colour = (BAD if left <= min(300, self.allowed * 0.2) else
                   SAFFRON_DARK if left <= min(600, self.allowed * 0.4) else NAVY)
         self.timer.configure(text=fmt_secs(left), fg_color=colour)
@@ -585,7 +714,7 @@ class TestView(ctk.CTkFrame):
             return
         self.finish()
 
-    def finish(self, auto=False):
+    def finish(self, auto=False, quiet=False):
         if self.done:
             return
         self.done = True
@@ -607,6 +736,8 @@ class TestView(ctk.CTkFrame):
             build_report(rec, report)
         except Exception:
             report = None
+        if quiet:
+            return
         if auto:
             messagebox.showinfo(APP_TITLE, "Time is over. Your test has been submitted and checked.")
         self.app.attributes("-topmost", False)
@@ -651,6 +782,7 @@ def make_tree(parent):
     tree.tag_configure("task", font=(FAMILY, 11, "bold"), background="#F6F8FC")
     tree.tag_configure("ok", foreground=OK)
     tree.tag_configure("bad", foreground=BAD)
+    tree.tag_configure("part", foreground=SAFFRON_DARK)
     tree.tag_configure("note", foreground="#7A5B00")
     return frame, tree
 
@@ -665,8 +797,9 @@ def fill_result_tree(tree, results):
             if c["desc"] == "Note":
                 iid = tree.insert(pid, "end", text=f"   ⓘ  {c['found']}", values=("",), tags=("note",))
             else:
-                iid = tree.insert(pid, "end", text=("   ✔  " if c["ok"] else "   ✘  ") + c["desc"],
-                                  values=(f"{c['got']:g} / {c['marks']:g}",), tags=("ok" if c["ok"] else "bad",))
+                kind = "ok" if c["ok"] else "part" if c.get("got") else "bad"
+                icon = {"ok": "   ✔  ", "part": "   ◐  ", "bad": "   ✘  "}[kind]
+                iid = tree.insert(pid, "end", text=icon + c["desc"], values=(f"{c['got']:g} / {c['marks']:g}",), tags=(kind,))
             meta[iid] = ("check", c)
     return meta
 
@@ -677,6 +810,7 @@ def make_detail(parent):
     t.tag_config("b", foreground=NAVY)
     t.tag_config("ok", foreground=OK)
     t.tag_config("bad", foreground=BAD)
+    t.tag_config("part", foreground=SAFFRON_DARK)
     t.tag_config("how", background="#FFF6E0", lmargin1=8, lmargin2=8)
     t.tag_config("muted", foreground=MUTED)
     t.configure(state="disabled")
@@ -695,8 +829,9 @@ def show_detail(text, kind, data):
     else:
         c = data
         text.insert("end", c["desc"] + "\n", "h")
-        text.insert("end", ("✔ Correct" if c["ok"] else "✘ Not correct") + f"   ({c['got']:g} / {c['marks']:g} marks)\n\n",
-                    "ok" if c["ok"] else "bad")
+        state = "✔ Correct" if c["ok"] else "◐ Part marks" if c.get("got") else "✘ Not correct"
+        text.insert("end", state + f"   ({c['got']:g} / {c['marks']:g} marks)\n\n",
+                    "ok" if c["ok"] else "part" if c.get("got") else "bad")
         text.insert("end", "WHAT WE FOUND\n", "b")
         text.insert("end", c["found"] + "\n\n")
         if c.get("expected"):
@@ -818,8 +953,11 @@ class ResultView(ctk.CTkFrame):
         bar = ctk.CTkFrame(self, fg_color="transparent")
         bar.pack(fill="x", pady=(12, 0))
         btn(bar, "← Home", app.show_home, "ghost", width=110).pack(side="left")
+        btn(bar, "Report wrong marking", self.report_problem, "ghost", width=180).pack(side="left", padx=8)
         if rec.get("spec"):
-            btn(bar, "Retake this test", lambda: app.start(rec["spec"]), "accent", width=170).pack(side="right")
+            btn(bar, "Retake (new numbers)", lambda: app.start(rec["spec"]), "accent", width=180).pack(side="right")
+            if rec.get("folder") and Path(rec["folder"]).exists() and rec["score"] < rec["out_of"]:
+                btn(bar, "Fix & recheck", lambda: app.start(rec["spec"], recheck=rec), width=140).pack(side="right", padx=8)
         if report:
             btn(bar, "Printable report", lambda: webbrowser.open(Path(report).as_uri()), "ghost", width=160).pack(side="right", padx=8)
         if rec.get("folder"):
@@ -834,6 +972,21 @@ class ResultView(ctk.CTkFrame):
         sel = self.tree.selection()
         if sel and sel[0] in self.meta:
             show_detail(self.detail, *self.meta[sel[0]])
+
+    def report_problem(self):
+        sel = self.tree.selection()
+        hint = ""
+        if sel and sel[0] in self.meta and self.meta[sel[0]][0] == "check":
+            hint = self.meta[sel[0]][1]["desc"]
+        note = ctk.CTkInputDialog(title="Report wrong marking",
+                                  text="Which point was marked wrongly, and what did you do?\n"
+                                       + (f"(Selected: {hint})" if hint else "(Tip: select the line first)")).get_input()
+        if note is None:
+            return
+        zp = make_problem_report(self.rec, f"Selected check: {hint}\n\n{note}")
+        messagebox.showinfo(APP_TITLE, f"A report file was made:\n\n{zp}\n\nPlease send this zip file (by WhatsApp or "
+                                       "e-mail) to the person who gave you the app, so the marking can be fixed.")
+        open_path(zp.parent)
 
 
 # =================================================================== quiz
@@ -950,7 +1103,9 @@ class HistoryView(ctk.CTkFrame):
         top = ctk.CTkFrame(self, fg_color="transparent")
         top.pack(fill="x")
         label(top, "My Progress", 22, "bold").pack(side="left")
+        pill(top, current_student(), NAVY_SOFT, NAVY).pack(side="left", padx=10)
         btn(top, "← Home", app.show_home, "ghost", width=110).pack(side="right")
+        btn(top, "Export all results to Excel", self.export, "ghost", width=230).pack(side="right", padx=8)
 
         body = ctk.CTkFrame(self, fg_color="transparent")
         body.pack(fill="both", expand=True, pady=(10, 0))
@@ -960,7 +1115,16 @@ class HistoryView(ctk.CTkFrame):
 
         c1 = card(body)
         c1.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
-        label(c1, "Past attempts", 15, "bold").pack(anchor="w", padx=16, pady=(14, 6))
+        label(c1, "Score trend", 15, "bold").pack(anchor="w", padx=16, pady=(14, 0))
+        self.chart = tk.Canvas(c1, height=130, bg=CARD, highlightthickness=0)
+        self.chart.pack(fill="x", padx=16, pady=(4, 6))
+        self.chart.bind("<Configure>", lambda e: self.draw_chart())
+        label(c1, "Past attempts", 15, "bold").pack(anchor="w", padx=16, pady=(4, 6))
+        bar = ctk.CTkFrame(c1, fg_color="transparent")
+        bar.pack(side="bottom", fill="x", padx=12, pady=12)
+        btn(bar, "Open result", self.open, "ghost", width=120).pack(side="left")
+        btn(bar, "Retake", self.retake, "accent", width=100).pack(side="left", padx=8)
+        btn(bar, "Delete attempt", self.delete, "danger", width=140).pack(side="right")
         frame = ctk.CTkFrame(c1, fg_color=CARD)
         frame.pack(fill="both", expand=True, padx=8)
         cols = ("when", "test", "att", "score", "word", "excel", "ppt")
@@ -975,11 +1139,6 @@ class HistoryView(ctk.CTkFrame):
         self.tree.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
         self.tree.bind("<Double-1>", lambda e: self.open())
-        bar = ctk.CTkFrame(c1, fg_color="transparent")
-        bar.pack(fill="x", padx=12, pady=12)
-        btn(bar, "Open result", self.open, "ghost", width=120).pack(side="left")
-        btn(bar, "Retake", self.retake, "accent", width=100).pack(side="left", padx=8)
-        btn(bar, "Delete attempt", self.delete, "danger", width=140).pack(side="right")
         self.load()
 
         c2 = card(body)
@@ -997,13 +1156,60 @@ class HistoryView(ctk.CTkFrame):
             hrow = ctk.CTkFrame(r, fg_color="transparent")
             hrow.pack(fill="x")
             name = topic[0].upper() + topic[1:]
-            label(hrow, name if len(name) <= 30 else name[:29] + "…", 13, "bold").pack(side="left")
+            label(hrow, name if len(name) <= 26 else name[:25] + "…", 13, "bold").pack(side="left")
             label(hrow, f"{ok}/{n}", 12, "bold", MUTED).pack(side="right")
-            label(r, APP_SHORT.get(app_, app_), 11, color=APP_COL.get(app_, MUTED)).pack(anchor="w")
+            srow = ctk.CTkFrame(r, fg_color="transparent")
+            srow.pack(fill="x")
+            label(srow, APP_SHORT.get(app_, app_), 11, color=APP_COL.get(app_, MUTED)).pack(side="left")
+            drills = practice_drills(app_, topic)
+            if drills:
+                ctk.CTkButton(srow, text="Practise →", width=86, height=22, corner_radius=8, font=F(11, "bold"),
+                              fg_color=NAVY_SOFT, hover_color="#D5DDEC", text_color=NAVY,
+                              command=lambda d=drills: app.start({"kind": "drills", "ids": [x.id for x in d]})
+                              ).pack(side="right")
             pb = ctk.CTkProgressBar(r, height=8, corner_radius=4, fg_color="#E6EAF2",
                                     progress_color=BAD if rate < 0.5 else SAFFRON if rate < 0.8 else OK)
             pb.set(rate)
             pb.pack(fill="x", pady=(3, 0))
+
+    def draw_chart(self):
+        c = self.chart
+        c.delete("all")
+        pts = [r["score"] / r["out_of"] * 100 for r in load_history() if r.get("out_of") and r.get("mode") != "Shortcut quiz"][-20:]
+        w, h = max(c.winfo_width(), 200), 130
+        left, right, top, bottom = 42, 12, 16, 22
+        for v in (0, 50, 100):
+            y = top + (h - top - bottom) * (1 - v / 100)
+            c.create_line(left, y, w - right, y, fill=LINE, dash=(2, 3) if v == 50 else None)
+            c.create_text(left - 6, y, text=f"{v}%", anchor="e", fill=MUTED, font=(FAMILY, 9))
+        if not pts:
+            c.create_text(w / 2, h / 2, text="Your scores will appear here after your first test", fill=MUTED,
+                          font=(FAMILY, 11))
+            return
+        step = (w - left - right) / max(1, len(pts) - 1) if len(pts) > 1 else 0
+        xy = [(left + (i * step if len(pts) > 1 else (w - left - right) / 2), top + (h - top - bottom) * (1 - p / 100))
+              for i, p in enumerate(pts)]
+        if len(xy) > 1:
+            c.create_line(*[v for p in xy for v in p], fill=NAVY, width=3)
+        for i, ((x, y), p) in enumerate(zip(xy, pts)):
+            c.create_oval(x - 5, y - 5, x + 5, y + 5, fill=SAFFRON, outline=CARD, width=2)
+            if i == len(pts) - 1 or len(pts) <= 8:
+                c.create_text(x, y - 13, text=f"{p:.0f}", fill=INK, font=(FAMILY, 9, "bold"))
+        c.create_text(left, h - 6, text="older", anchor="w", fill=MUTED, font=(FAMILY, 9))
+        c.create_text(w - right, h - 6, text="latest", anchor="e", fill=MUTED, font=(FAMILY, 9))
+
+    def export(self):
+        path = filedialog.asksaveasfilename(title="Save results as", defaultextension=".xlsx",
+                                            initialdir=str(default_root()), initialfile="ISRO_SkillTest_Results.xlsx",
+                                            filetypes=[("Excel workbook", "*.xlsx")])
+        if not path:
+            return
+        try:
+            export_results(path)
+        except PermissionError:
+            messagebox.showerror(APP_TITLE, "Could not save – is that file open in Excel? Close it and try again.")
+            return
+        open_path(path)
 
     def load(self):
         self.tree.delete(*self.tree.get_children())
@@ -1013,7 +1219,8 @@ class HistoryView(ctk.CTkFrame):
             fmt = lambda k: f"{s[k][0]:g}/{s[k][1]:g}" if k in s else "–"
             w = rec["when"]
             when = f"{w[8:10]}-{w[5:7]}-{w[0:4]} {w[11:16]}"
-            iid = self.tree.insert("", "end", values=(when, rec["title"],
+            name = rec["title"] + (" (recheck)" if rec.get("mode") == "Fix & recheck" else "")
+            iid = self.tree.insert("", "end", values=(when, name,
                                                       rec.get("attempt", "–"), f"{rec['score']:g}/{rec['out_of']:g}",
                                                       fmt("word"), fmt("excel"), fmt("ppt")))
             self.rows[iid] = rec
@@ -1051,6 +1258,15 @@ class HistoryView(ctk.CTkFrame):
         if messagebox.askyesno(APP_TITLE, msg, icon="warning"):
             delete_attempt(rec)
             self.app.switch(HistoryView)
+
+
+def practice_drills(app, topic):
+    """Drills that practise a weak topic (at most 3)."""
+    found = [d for d in DRILLS if d.app == app and any(c.topic == topic for c in d.checks)]
+    if not found:
+        words = {w for w in topic.lower().replace("&", " ").split() if len(w) > 3}
+        found = [d for d in DRILLS if d.app == app and words & set(d.topic.lower().replace("&", " ").split())]
+    return found[:3]
 
 
 def main():

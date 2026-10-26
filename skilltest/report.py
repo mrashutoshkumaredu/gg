@@ -20,7 +20,7 @@ h1{margin:0 0 4px;font-size:24px}h2{margin:28px 0 10px;font-size:19px}h3{margin:
 .task header{display:flex;justify-content:space-between;gap:10px;padding:12px 16px;background:#eef2fa;border-bottom:1px solid var(--line)}
 table{width:100%;border-collapse:collapse}td,th{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left}
 th{font-size:13px;color:var(--muted);font-weight:600}
-.ok{color:var(--ok);font-weight:700}.bad{color:var(--bad);font-weight:700}
+.ok{color:var(--ok);font-weight:700}.bad{color:var(--bad);font-weight:700}.part{color:#b26500;font-weight:700}
 .how{background:#fff8e1;border-left:3px solid #f0b400;padding:4px 8px;margin-top:4px;font-size:14px}
 .sol{padding:10px 16px 14px}.sol ol{margin:6px 0 0 18px;padding:0}
 .ev{font:13px Consolas,monospace}.ev td{padding:3px 8px}
@@ -59,7 +59,12 @@ def build(record: dict, path: Path):
             if c["desc"] == "Note":
                 parts.append(f"<tr><td colspan='3' class='muted'>Note: {esc(c['found'])}</td></tr>")
                 continue
-            mark = "<span class='ok'>✔ Correct</span>" if c["ok"] else "<span class='bad'>✘ Not correct</span>"
+            if c["ok"]:
+                mark = "<span class='ok'>✔ Correct</span>"
+            elif c.get("got"):
+                mark = "<span class='part'>◐ Part marks</span>"
+            else:
+                mark = "<span class='bad'>✘ Not correct</span>"
             body = f"{mark}<div>Found: {esc(c['found'])}</div>"
             if not c["ok"]:
                 if c["expected"]:
@@ -80,6 +85,46 @@ def build(record: dict, path: Path):
             parts.append(f"<tr><td>{esc(e['time'])}</td><td>+{fmt_secs(e['elapsed'])}</td><td>{esc(e['app'])}</td>"
                          f"<td>{esc(e['msg'])}</td></tr>")
         parts.append("</table></div>")
+    parts.append("</div></body></html>")
+    Path(path).write_text("\n".join(parts), encoding="utf-8")
+    return path
+
+
+def build_instructions(tasks, title, path):
+    """Bilingual (English + Hindi) question paper, opened in the browser where Hindi shows correctly."""
+    from .content.hindi import UI, hindi_lines
+    parts = [f"<!doctype html><html lang='hi'><head><meta charset='utf-8'><title>{esc(title)} – Instructions</title>"
+             "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+             "<style>" + CSS + "\n.hi{color:#0b4f9c;font-family:'Nirmala UI','Mangal','Noto Sans Devanagari',sans-serif;"
+             "font-size:16px;margin:2px 0 10px}.en{margin:0}.q{font:14px Consolas,monospace;background:#f6f8fc;"
+             "border-left:3px solid #c9d3e6;padding:4px 10px;margin:2px 0 2px 18px;white-space:pre-wrap;"
+             "user-select:none;-webkit-user-select:none}"
+             "ol{padding-left:22px}li{margin-bottom:6px}</style></head><body><div class='wrap'>",
+             f"<h1>{esc(title)}</h1><div class='hi'>{esc(UI['title'])}</div>",
+             f"<p class='muted'>{esc(UI['note'])}</p>"]
+    for t in tasks:
+        parts.append(f"<div class='task'><header><h3>{esc(APP_LABEL[t.app])} – {esc(t.title)}</h3>"
+                     f"<b>{t.marks:g} marks / {esc(UI['marks'])}</b></header><div class='sol'>")
+        parts.append(f"<p><b>Save as / {esc(UI['save_as'])}:</b> {esc(t.file)}</p>")
+        if t.starters:
+            parts.append(f"<p><b>Starter file / {esc(UI['starter'])}:</b> {esc(', '.join(t.starters))}</p>")
+        parts.append("<ol>")
+        open_li = False
+        for en, hi, quote in hindi_lines(t):
+            if quote:
+                parts.append(f"<div class='q'>{esc(en)}</div>")
+                continue
+            if open_li:
+                parts.append("</li>")
+            parts.append(f"<li><p class='en'>{esc(en)}</p>" + (f"<p class='hi'>{esc(hi)}</p>" if hi else ""))
+            open_li = True
+        if open_li:
+            parts.append("</li>")
+        parts.append("</ol></div></div>")
+    # the passages are for typing practice: block copying them
+    parts.append("<script>document.addEventListener('copy',function(e){var s=String(window.getSelection());"
+                 "if(s.length>20){e.preventDefault();alert('Copying is turned off. Please type the text yourself.');}});"
+                 "document.addEventListener('contextmenu',function(e){if(e.target.closest('.q'))e.preventDefault();});</script>")
     parts.append("</div></body></html>")
     Path(path).write_text("\n".join(parts), encoding="utf-8")
     return path

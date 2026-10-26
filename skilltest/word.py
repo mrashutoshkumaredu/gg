@@ -10,7 +10,7 @@ from docx.text.paragraph import Paragraph
 from docx.text.run import Run
 from lxml import etree
 
-from .core import Check, norm, short, similarity
+from .core import Check, norm, partial, short, similarity
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 NSMAP = {"w": W_NS,
@@ -358,25 +358,54 @@ def _runs_check(text, prop_ok, describe, file=None, sub=None):
     return fn
 
 
-def typed(text, marks=2.0, file=None, min_acc=0.9, what=None):
-    """The student typed the given passage (allowing a few typing mistakes)."""
+def typing_report(want, full):
+    """Compare the passage with what was typed (word by word, case matters).
+    Returns (accuracy 0..1, list of mistakes in plain words)."""
+    from difflib import SequenceMatcher
+    from .core import _QUOTES
+    clean = lambda t: re.sub(r"\s+", " ", (t or "").translate(_QUOTES)).strip()
+    ww, fw = clean(want).split(), clean(full).split()
+    if not ww:
+        return 1.0, []
+    sm = SequenceMatcher(None, ww, fw, autojunk=False)
+    blocks = [b for b in sm.get_matching_blocks() if b.size]
+    if not blocks:
+        return 0.0, ["The passage was not found in the document"]
+    # the part of the document that lines up with the passage
+    lo = max(0, blocks[0].b - blocks[0].a)
+    hi = min(len(fw), blocks[-1].b + blocks[-1].size + (len(ww) - blocks[-1].a - blocks[-1].size))
+    region = fw[lo:hi]
+    acc = SequenceMatcher(None, " ".join(ww), " ".join(region), autojunk=False).ratio()
+    mistakes = []
+    for op, a1, a2, b1, b2 in SequenceMatcher(None, ww, region, autojunk=False).get_opcodes():
+        if op == "replace":
+            mistakes.append(f"'{' '.join(ww[a1:a2])}' typed as '{' '.join(region[b1:b2])}'")
+        elif op == "delete":
+            mistakes.append(f"missing '{' '.join(ww[a1:a2])}'")
+        elif op == "insert":
+            mistakes.append(f"extra '{' '.join(region[b1:b2])}'")
+    return acc, mistakes
+
+
+def typed(text, marks=2.0, file=None, full_at=0.98, zero_at=0.6, what=None):
+    """The student typed the given passage. Each mistake costs 10% of the marks; the wrong words are listed."""
     def fn(ctx):
         d = ctx.word(file)
-        full = norm(d.text())
-        want = norm(text)
-        if want in full:
+        acc, mistakes = typing_report(text, d.text())
+        if not mistakes:
             return True, "Typed correctly (100% match)"
-        # compare with the best window of the same length
-        best = 0.0
-        step = max(1, len(want) // 8)
-        for i in range(0, max(1, len(full) - len(want) // 2), step):
-            best = max(best, similarity(want, full[i:i + len(want) + 10]))
-        ok = best >= min_acc
-        return ok, f"Typing accuracy about {best:.0%}" + ("" if ok else f" (needs {min_acc:.0%} or more)")
+        # every mistake costs 10% of the marks; very poor accuracy costs more
+        by_acc = 1.0 if acc >= full_at else max(0.0, (acc - zero_at) / (full_at - zero_at))
+        frac = max(0.0, min(by_acc, 1 - 0.1 * len(mistakes)))
+        msg = f"Typing accuracy {acc:.0%}, {len(mistakes)} mistake(s): " + "; ".join(mistakes[:8])
+        if len(mistakes) > 8:
+            msg += f"; … and {len(mistakes) - 8} more"
+        return frac, msg
     return Check(what or f"Typed the text: '{short(text, 45)}'", marks, fn,
-                 expected="Text typed as given, with very few mistakes",
-                 how="Type the passage carefully. Use Review > Spelling & Grammar (F7) to catch mistakes before saving.",
-                 topic=T_EDIT)
+                 expected="Text typed exactly as given (capital letters and punctuation count)",
+                 how="Type the passage carefully, then read it once more against the question. "
+                     "Review > Spelling & Grammar (F7) also catches many mistakes.",
+                 topic="Typing")
 
 
 def contains(text, marks=1.0, file=None, what=None, topic=T_EDIT, how="Type or insert the text as asked."):
@@ -569,7 +598,7 @@ def listed(texts, kind="bullet", marks=1.0, file=None):
                 bad.append(f"'{short(t, 25)}' is numbered, not bulleted")
             elif kind == "number" and f in ("bullet", "none"):
                 bad.append(f"'{short(t, 25)}' has bullets, not numbers")
-        return (not bad), ("All items OK" if not bad else "; ".join(bad))
+        return partial(len(texts) - len(bad), len(texts)), ("All items OK" if not bad else "; ".join(bad))
     label = "bullets" if kind == "bullet" else "numbering"
     return Check(f"{len(texts)} items have {label}", marks, fn, expected=f"Each item starts with a {kind}",
                  how=f"Select the lines > Home > {'Bullets' if kind == 'bullet' else 'Numbering'} button.",
@@ -847,7 +876,7 @@ def table_has(texts, marks=1.0, file=None, index=0):
             return False, err
         flat = norm(" | ".join(" | ".join(r) for r in _grid(t)))
         miss = [x for x in texts if norm(x) not in flat]
-        return (not miss), ("All entries present" if not miss else "Missing: " + ", ".join(miss[:5]))
+        return partial(len(texts) - len(miss), len(texts)), ("All entries present" if not miss else "Missing: " + ", ".join(miss[:5]))
     return Check("Table data entered correctly", marks, fn, expected="All the given values in the table",
                  how="Click in each cell and type; use Tab to move to the next cell.", topic=T_TABLE)
 
@@ -967,7 +996,7 @@ def mergefields(names, marks=2.0, file=None):
         d = ctx.word(file)
         flds = " ".join(d.fields()).upper()
         miss = [n for n in names if f"MERGEFIELD {n.upper()}" not in flds.replace('"', "").replace("  ", " ")]
-        return (not miss), ("All merge fields present" if not miss else "Missing merge field(s): " + ", ".join(miss))
+        return partial(len(names) - len(miss), len(names)), ("All merge fields present" if not miss else "Missing merge field(s): " + ", ".join(miss))
     return Check("Merge fields inserted: " + ", ".join(f"«{n}»" for n in names), marks, fn,
                  expected="«" + "», «".join(names) + "» in the letter",
                  how="Mailings > Start Mail Merge > Letters > Select Recipients > Use an Existing List > pick the Excel "
@@ -982,7 +1011,7 @@ def merged_output(values, marks=2.0, file=None):
         miss = [v for v in values if norm(v) not in t]
         if "mergefield" in " ".join(d.fields()).lower():
             return False, "This file still has merge fields. Use Finish & Merge > Edit Individual Documents."
-        return (not miss), (f"All {len(values)} letters generated" if not miss else "Missing: " + ", ".join(miss))
+        return partial(len(values) - len(miss), len(values)), (f"All {len(values)} letters generated" if not miss else "Missing: " + ", ".join(miss))
     return Check("Merged letters generated for all recipients", marks, fn,
                  expected="One letter per recipient with real names",
                  how="Mailings > Finish & Merge > Edit Individual Documents > All > OK. Save the new document.",
@@ -996,11 +1025,10 @@ def spell_fixed(pairs, marks=2.0, file=None):
         t = d.text().lower()
         left = [w for w in pairs if re.search(r"\b" + w.lower() + r"\b", t)]
         fixed = [r for r in pairs.values() if r.lower() in t]
-        ok = not left and len(fixed) == len(pairs)
         msg = f"{len(fixed)} of {len(pairs)} words corrected"
         if left:
             msg += "; still wrong: " + ", ".join(left)
-        return ok, msg
+        return partial(len([w for w in pairs if w not in left and pairs[w].lower() in t]), len(pairs)), msg
     return Check("Spelling mistakes corrected", marks, fn,
                  expected="; ".join(f"{a} → {b}" for a, b in pairs.items()),
                  how="Press F7 (Review > Spelling & Grammar) and click Change for each wrong word.", topic="Spell Checks")

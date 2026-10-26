@@ -7,7 +7,7 @@ import zipfile
 from openpyxl import load_workbook
 from openpyxl.utils import column_index_from_string, get_column_letter, range_boundaries
 
-from .core import Check, Missing, norm, short
+from .core import Check, Missing, norm, partial, short
 
 T_FORMULA = "Setting formula"
 T_FMT = "Formatting spreadsheets"
@@ -132,7 +132,7 @@ def text_in(sheet, rng, texts, marks=1.0, file=None, what=None, topic=T_DATA):
         ws = ctx.excel(file).ws(sheet, values=True)
         have = norm(" | ".join(str(c.value) for c in cells(ws, rng) if c.value is not None))
         miss = [t for t in texts if norm(str(t)) not in have]
-        return (not miss), ("All present" if not miss else "Missing: " + ", ".join(map(str, miss[:5])))
+        return partial(len(texts) - len(miss), len(texts)), ("All present" if not miss else "Missing: " + ", ".join(map(str, miss[:5])))
     return Check(what or f"Data entered in {_sheet_label(sheet)}{rng}", marks, fn, expected=", ".join(map(str, texts[:6])),
                  how="Click each cell and type; press Enter or Tab to move on.", topic=topic)
 
@@ -220,7 +220,8 @@ def borders(sheet, rng, marks=1.0, file=None):
                 bottom = bd.bottom.style or ws.cell(row + 1, col).border.top.style
                 if not (left and right and top and bottom):
                     bad.append(c.coordinate)
-        return (not bad), ("All borders present" if not bad else f"{len(bad)} cell(s) without full borders, e.g. {', '.join(bad[:4])}")
+        total = (max_r - min_r + 1) * (max_c - min_c + 1)
+        return (1.0 if not bad else partial(total - len(bad), total) * 0.75), ("All borders present" if not bad else f"{len(bad)} cell(s) without full borders, e.g. {', '.join(bad[:4])}")
     return Check(f"All borders on {_sheet_label(sheet)}{rng}", marks, fn, expected="Every cell has a border",
                  how="Select the range > Home > Borders drop-down > All Borders.", topic="border & shading")
 
@@ -700,7 +701,7 @@ def rowwise(sheet, col, first, last, func, compute, marks=1.0, file=None, what=N
             elif norm(str(got)) != norm(str(want)):
                 bad.append(f"{col}{r} gives {got} (should be {want})")
         n = last - first + 1
-        return (not bad), (f"All {n} rows correct" if not bad else f"{len(bad)} problem(s): " + "; ".join(bad[:3]))
+        return partial(n - len(bad), n), (f"All {n} rows correct" if not bad else f"{len(bad)} of {n} rows wrong: " + "; ".join(bad[:3]))
     return Check(what or f"{_sheet_label(sheet)}{col}{first}:{col}{last} use {func}", marks, fn,
                  expected=(f"A {func} formula" if func.isalpha() else "A formula") + f" in every row of column {col}",
                  how=how or f"Type the formula in {col}{first}, press Enter, then drag the fill handle down to row {last}.",
@@ -723,6 +724,6 @@ def labelled_values(sheet, label_col, value_col, mapping, marks=1.0, file=None, 
             n = _num(got)
             if n is None or abs(n - want) > tol:
                 bad.append(f"{lab}: {got if got is not None else 'missing'} (should be {want:g})")
-        return (not bad), ("All values correct" if not bad else "; ".join(bad[:4]))
+        return partial(len(mapping) - len(bad), len(mapping)), ("All values correct" if not bad else "; ".join(bad[:4]))
     return Check(what or f"Correct totals on {sheet.split('|')[0]}", marks, fn,
                  expected="; ".join(f"{k} = {v:g}" for k, v in list(mapping.items())[:5]), how=how, topic=topic)

@@ -4,6 +4,7 @@ from .. import excel as X
 from .. import ppt as P
 from .. import word as W
 from ..core import Paper, Task
+from . import variants as V
 from .starters import docx_with, xlsx
 
 # ------------------------------------------------------------------ WORD
@@ -111,8 +112,13 @@ w2 = Task(
 
 # ------------------------------------------------------------------ EXCEL
 
-EMP = [("E101", "Ramesh", 35400), ("E102", "Sunita", 25500), ("E103", "Ajay", 44900), ("E104", "Lakshmi", 29200),
-       ("E105", "Naveen", 21700), ("E106", "Pooja", 56100), ("E107", "Kiran", 25500), ("E108", "Farhan", 35400)]
+_EMP0 = [("E101", "Ramesh", 35400), ("E102", "Sunita", 25500), ("E103", "Ajay", 44900), ("E104", "Lakshmi", 29200),
+         ("E105", "Naveen", 21700), ("E106", "Pooja", 56100), ("E107", "Kiran", 25500), ("E108", "Farhan", 35400)]
+_EN = V.names([r[1] for r in _EMP0])
+_LEVELS = [21700, 25500, 29200, 35400, 44900, 56100]
+EMP = [(e, n, V.choice(_LEVELS, b)) for (e, _, b), n in zip(_EMP0, _EN)]
+EMP[1] = (EMP[1][0], EMP[1][1], 25500)          # at least one Basic of 25500 for the COUNTIF question
+GROSS = [round(b * (1 + 0.46 + 0.24)) for _, _, b in EMP]
 DA, HRA = 0.46, 0.24
 
 
@@ -145,10 +151,10 @@ e1 = Task(
         X.rowwise("Pay", "F", 2, 9, "ROUND", _gross, 2.5, what="Gross with ROUND",
                   how="In F2 type =ROUND(C2+D2+E2,0) and fill down."),
         X.number_format("Pay", "C2:F9", "comma", 1),
-        X.formula("Pay", "F11", "MAX", round(56100 * 1.7), 1.5),
-        X.formula("Pay", "F12", "MIN", round(21700 * 1.7), 1.5),
-        X.formula("Pay", "F13", "COUNTIF", 2, 2, how='In F13 type =COUNTIF(C2:C9,25500).'),
-        X.formula("Pay", "I6", "VLOOKUP", "Lakshmi", 2, how="In I6 type =VLOOKUP(I5,A2:F9,2,FALSE)."),
+        X.formula("Pay", "F11", "MAX", max(GROSS), 1.5),
+        X.formula("Pay", "F12", "MIN", min(GROSS), 1.5),
+        X.formula("Pay", "F13", "COUNTIF", sum(1 for e in EMP if e[2] == 25500), 2, how='In F13 type =COUNTIF(C2:C9,25500).'),
+        X.formula("Pay", "I6", "VLOOKUP", EMP[3][1], 2, how="In I6 type =VLOOKUP(I5,A2:F9,2,FALSE)."),
         X.bold("Pay", "A1:F1", 0.5), X.wrap("Pay", "A1:F1", 0.5), X.row_height("Pay", 1, 30, 1),
     ],
     solution=[
@@ -156,7 +162,7 @@ e1 = Task(
         "D2: =C2*$I$1   E2: =C2*$I$2   F2: =ROUND(C2+D2+E2,0). Select D2:F2 > double-click the fill handle.",
         "Select C2:F9 > Home > Comma Style (,).",
         "F11: =MAX(F2:F9)   F12: =MIN(F2:F9)   F13: =COUNTIF(C2:C9,25500).",
-        "I6: =VLOOKUP(I5,A2:F9,2,FALSE) – it shows Lakshmi.",
+        f"I6: =VLOOKUP(I5,A2:F9,2,FALSE) – it shows {EMP[3][1]}.",
         "Select A1:F1 > Ctrl+B > Wrap Text. Right-click row 1 > Row Height > 30.",
         "Ctrl+S.",
     ],
@@ -166,6 +172,7 @@ ITEMS = [("Pen", "Stationery", 250, 10), ("Stapler", "Stationery", 40, 85), ("To
          ("A4 Paper", "Stationery", 120, 260), ("Mouse", "Computer", 18, 450), ("Keyboard", "Computer", 15, 650),
          ("Drum Unit", "Printer", 4, 3800), ("File Cover", "Stationery", 300, 12), ("Pen Drive", "Computer", 25, 550),
          ("Ink Cartridge", "Printer", 9, 1200)]
+ITEMS = [(a, b, V.num(q, 0.4, low=1), p) for a, b, q, p in ITEMS]
 
 e2 = Task(
     id="M2-E2", app="excel", title="Inventory Register", file="Inventory.xlsx", minutes=12,
