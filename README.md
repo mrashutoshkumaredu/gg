@@ -15,6 +15,13 @@ Double-click it. Nothing needs to be installed. MS Office (2010 or newer) must b
 If Windows shows "Windows protected your PC", click **More info > Run anyway**. This happens because the
 file is not signed.
 
+## Updates
+
+The app checks for a new version when it opens. If there is one, the Home screen shows
+**New version … is available** with **What's new** and **Update now**. Update now downloads the new .exe,
+closes the app, replaces the file and opens the new version. Scores and settings are kept.
+You can also press **Check for updates** at the bottom of the Home screen.
+
 ## What is inside
 
 - **5 full mock tests**: each one has 2 Word, 2 Excel and 2 PowerPoint tasks, 100 marks in total, with a 75-minute timer.

@@ -26,6 +26,10 @@ jobs:
       - name: Check every paper can be marked
         run: python tests/test_all.py
 
+      - name: Stamp the build number (used by the in-app updater)
+        shell: pwsh
+        run: '"BUILD = ${{ github.run_number }}" | Out-File -Encoding ascii skilltest/_build.py'
+
       - name: Build ISRO_SkillTest.exe
         run: >
           pyinstaller --noconfirm --onefile --windowed --name ISRO_SkillTest
@@ -45,12 +49,21 @@ jobs:
           name: ISRO_SkillTest
           path: dist/ISRO_SkillTest.exe
 
+      - name: Write release notes
+        shell: pwsh
+        env:
+          MSG: ${{ github.event.head_commit.message }}
+        run: |
+          $lines = $env:MSG -split "`n" | Where-Object { $_ -notmatch '^(Co-Authored-By|Claude-Session):' }
+          $notes = ($lines -join "`n").Trim()
+          $notes += "`n`n---`nDownload **ISRO_SkillTest.exe** below and double-click it, or press **Update now** inside the app.`n"
+          $notes += "Windows may show 'Windows protected your PC' the first time: click More info > Run anyway."
+          Set-Content -Path notes.md -Value $notes -Encoding utf8
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}
           name: ISRO Skill Test Practice v1.0.${{ github.run_number }}
-          body: |
-            Download **ISRO_SkillTest.exe** below and double-click it. No installation needed.
-            Windows may show "Windows protected your PC" the first time: click More info > Run anyway.
+          body_path: notes.md
           files: dist/ISRO_SkillTest.exe

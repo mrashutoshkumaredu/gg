@@ -25,6 +25,8 @@ from .session import (DEFAULT_STUDENT, current_student, default_root, delete_att
                       next_attempt_number, prepare_folder, remove_student, save_attempt, save_settings, set_student,
                       stats, students, weak_topics)
 from .shortcuts import make_quiz
+from . import updater
+import threading
 
 APP_TITLE = "ISRO Skill Test Practice"
 SECTION_MIN = {"word": 26, "excel": 26, "ppt": 23}
@@ -131,7 +133,7 @@ class App(ctk.CTk):
     def __init__(self):
         ctk.set_appearance_mode("light")
         super().__init__(fg_color=BG)
-        self.title(f"{APP_TITLE}  v{__version__}")
+        self.title(f"{APP_TITLE}  v{__version__}" + (f" (build {updater.BUILD})" if updater.BUILD else ""))
         scale = max(ctk.ScalingTracker.get_window_scaling(self), 0.1)      # Windows display scaling, e.g. 125%
         sw, sh = int(self.winfo_screenwidth() / scale), int(self.winfo_screenheight() / scale)
         self.geometry(f"{min(1180, sw - 40)}x{min(780, sh - 90)}")
@@ -156,7 +158,87 @@ class App(ctk.CTk):
         self.body.pack(fill="both", expand=True)
         self.frame = None
         self.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.update_info = None
+        self._upd = None
+        updater.cleanup_leftovers()
         self.show_home()
+        self.after(1500, lambda: self.check_updates(quiet=True))
+
+    # ---------- updates
+    def check_updates(self, quiet=False):
+        def work():
+            try:
+                self._upd = ("ok", updater.latest())
+            except Exception as e:
+                self._upd = ("error", str(e))
+        self._upd = None
+        threading.Thread(target=work, daemon=True).start()
+        self._wait_updates(quiet, 0)
+
+    def _wait_updates(self, quiet, n):
+        if self._upd is None:
+            if n < 60:
+                self.after(250, lambda: self._wait_updates(quiet, n + 1))
+            elif not quiet:
+                messagebox.showinfo(APP_TITLE, "Could not reach GitHub. Check the internet connection and try again.")
+            return
+        kind, info = self._upd
+        if kind == "error":
+            if not quiet:
+                messagebox.showinfo(APP_TITLE, "Could not check for updates (no internet?).\n\n" + info[:200])
+            return
+        if not updater.frozen():
+            if not quiet:
+                webbrowser.open(updater.PAGE)
+            return
+        if updater.update_available(info):
+            self.update_info = info
+            if isinstance(self.frame, Home):
+                self.frame.show_update(info)
+        elif not quiet:
+            messagebox.showinfo(APP_TITLE, f"You have the latest version (build {updater.BUILD}).")
+
+    def run_update(self):
+        info = self.update_info
+        if not info:
+            return
+        if isinstance(self.frame, TestView) and not self.frame.done:
+            messagebox.showinfo(APP_TITLE, "Finish or submit the test first, then update.")
+            return
+        box = ctk.CTkToplevel(self, fg_color=BG)
+        box.title("Updating")
+        box.attributes("-topmost", True)
+        box.geometry("420x170")
+        label(box, f"Downloading {info['tag']}…", 15, "bold", NAVY).pack(anchor="w", padx=20, pady=(20, 8))
+        bar = ctk.CTkProgressBar(box, height=12, corner_radius=6, progress_color=SAFFRON, fg_color="#E6EAF2")
+        bar.set(0)
+        bar.pack(fill="x", padx=20)
+        note = label(box, "The app will close and open again by itself.", 12, color=MUTED)
+        note.pack(anchor="w", padx=20, pady=10)
+        state = {"done": 0, "total": info.get("size") or 1, "result": None}
+
+        def work():
+            try:
+                state["result"] = ("ok", updater.download(info, lambda d, t: state.update(done=d, total=t or state["total"])))
+            except Exception as e:
+                state["result"] = ("error", str(e))
+        threading.Thread(target=work, daemon=True).start()
+
+        def poll():
+            bar.set(min(1.0, state["done"] / max(1, state["total"])))
+            if state["result"] is None:
+                self.after(200, poll)
+                return
+            kind, val = state["result"]
+            if kind == "error":
+                box.destroy()
+                messagebox.showerror(APP_TITLE, f"Update failed:\n{val}\n\nYou can also download it from:\n{updater.PAGE}")
+                return
+            note.configure(text="Installing… the app will reopen in a few seconds.")
+            box.update()
+            updater.install_and_restart(val)
+            self.after(600, self.destroy)
+        poll()
 
     def _head_fit(self, e=None):
         if e is not None and e.widget is not self:
@@ -233,6 +315,11 @@ class Home(ctk.CTkScrollableFrame):
         self.app = app
         names = [p.title for p in PAPERS]
 
+        # update banner (filled in when a newer version is found)
+        self.upd = ctk.CTkFrame(self, fg_color="#FFF1E0", corner_radius=12, border_width=1, border_color="#F5C58A")
+        if app.update_info:
+            self.after(10, lambda: self.show_update(app.update_info))
+
         # student chooser
         who = ctk.CTkFrame(self, fg_color="transparent")
         who.pack(fill="x", pady=(0, 10))
@@ -295,6 +382,7 @@ class Home(ctk.CTkScrollableFrame):
         ctk.CTkSwitch(self.bar_a, text="Strict exam mode", variable=self.strict, font=F(12), progress_color=NAVY,
                       command=self.toggle_strict).pack(side="left", padx=6)
         btn(self.bar_b, "Change", self.change_root, "ghost", width=80).pack(side="right")
+        btn(self.bar_b, "Check for updates", lambda: app.check_updates(), "ghost", width=150).pack(side="left")
         self.root_lbl = label(self.bar_b, f"Test folders: {default_root()}", 12, color=MUTED)
         self.root_lbl.pack(side="right", padx=8)
 
@@ -324,6 +412,19 @@ class Home(ctk.CTkScrollableFrame):
         else:
             self.bar_a.pack(side="left")
             self.bar_b.pack(side="right")
+
+    def show_update(self, info):
+        for w in self.upd.winfo_children():
+            w.destroy()
+        label(self.upd, f"New version {info['tag']} is available.", 14, "bold", "#7A3E00").pack(side="left", padx=16, pady=10)
+        btn(self.upd, "Update now", self.app.run_update, "accent", width=120, height=34).pack(side="right", padx=(6, 12))
+        notes = (info.get("notes") or "").split("\n---")[0]
+        lines = [l.strip("-• ").strip() for l in notes.splitlines()
+                 if l.strip() and not l.startswith(("Co-Authored-By", "Claude-Session"))][:15] or ["Improvements and fixes."]
+        btn(self.upd, "What's new", lambda: Popup(self.app, f"What's new in {info['tag']}", lines=lines),
+            "ghost", width=110, height=34).pack(side="right")
+        if not self.upd.winfo_manager():
+            self.upd.pack(fill="x", pady=(0, 10), before=self.winfo_children()[1])
 
     def toggle_strict(self):
         s = load_settings()
