@@ -516,6 +516,8 @@ class TestView(ctk.CTkFrame):
         self.done = False
         self.events_q = queue.Queue()
         self.cur = 0
+        self.mini = None
+        self.allow_check = allow_check
 
         if folder:                                   # Fix & recheck: keep working in the same folder
             self.folder, self.attempt = Path(folder), attempt
@@ -546,7 +548,8 @@ class TestView(ctk.CTkFrame):
         self.timer = ctk.CTkLabel(self.t_ctrl, text=fmt_secs(seconds), font=ctk.CTkFont(family=MONO, size=24, weight="bold"),
                                   fg_color=NAVY, text_color="white", corner_radius=10, width=110, height=44)
         self.timer.pack(side="right", padx=6)
-        btn(self.t_ctrl, "Split screen", self.split_screen, "ghost", width=110, height=44).pack(side="right", padx=6)
+        btn(self.t_ctrl, "Split screen", self.split_screen, "ghost", width=104, height=44).pack(side="right", padx=4)
+        btn(self.t_ctrl, "Mini bar", self.open_mini, "ghost", width=84, height=44).pack(side="right", padx=4)
         self.topmost = tk.BooleanVar(value=False)
         self.top_switch = ctk.CTkSwitch(self.t_ctrl, text="Keep on top", variable=self.topmost, font=F(12),
                                         progress_color=NAVY, command=lambda: app.attributes("-topmost", self.topmost.get()))
@@ -669,6 +672,26 @@ class TestView(ctk.CTkFrame):
             self.b_acts.pack(side="right")
             self.log.pack(fill="x", padx=12, pady=(0, 10))
 
+    def open_mini(self):
+        """Small floating question box; the main window goes to the taskbar."""
+        if self.mini is None or not self.mini.winfo_exists():
+            self.mini = MiniBar(self)
+        self.mini.deiconify()
+        self.mini.lift()
+        self.app.attributes("-topmost", False)
+        self.app.iconify()
+        self.monitor.log("test", "Mini bar opened (Office can stay full screen)")
+
+    def close_mini(self):
+        if self.mini is not None:
+            try:
+                self.mini.destroy()
+            except tk.TclError:
+                pass
+            self.mini = None
+        self.app.deiconify()
+        self.app.lift()
+
     def split_screen(self):
         """Office on the left, this window on the right (always on top)."""
         moved = arrange_split(self.app, app_share=0.42)
@@ -743,21 +766,10 @@ class TestView(ctk.CTkFrame):
         self.h_file.configure(text=f"Save as:  {t.file}")
         self.h_start.configure(text=("Starter file in the folder: " + ", ".join(t.starters)) if t.starters else
                                "Pictures for inserting are in the 'Pictures' folder.")
-        tx = self.text
-        tx.configure(state="normal")
-        tx.delete("1.0", "end")
-        n = 0
-        for line in t.instructions:
-            if line.startswith("   "):
-                tx.insert("end", line.strip() + "\n", "quote")
-            else:
-                n += 1
-                tx.insert("end", f"{n}.  ", "num")
-                tx.insert("end", line + "\n")
-            tx.insert("end", "\n" if not line.startswith("   ") else "")
-        tx.insert("end", "Save inside the test folder with the exact file name.", "hint")
-        tx.configure(state="disabled")
+        render_instructions(self.text, t)
         self.b_starter.configure(state="normal" if t.starters else "disabled")
+        if self.mini is not None:
+            self.mini.show_task()
 
     def open_starter(self):
         for name in self.current().starters:
@@ -792,6 +804,8 @@ class TestView(ctk.CTkFrame):
         colour = (BAD if left <= min(300, self.allowed * 0.2) else
                   SAFFRON_DARK if left <= min(600, self.allowed * 0.4) else NAVY)
         self.timer.configure(text=fmt_secs(left), fg_color=colour)
+        if self.mini is not None:
+            self.mini.set_timer(fmt_secs(left), colour)
         for k, c in self.chips.items():
             c.configure(text=f"  {APP_SHORT[k]} {fmt_secs(self.monitor.app_seconds[k])}  ")
         for mins in (10, 5, 1):
@@ -824,6 +838,8 @@ class TestView(ctk.CTkFrame):
             return
         self.done = True
         self.monitor.stop()
+        if self.mini is not None:
+            self.close_mini()
         used = min(time.monotonic() - self.started, self.allowed)
         wait = card(self, fg_color=NAVY)
         label(wait, "Checking your files…", 18, "bold", "white").pack(padx=40, pady=24)
@@ -871,6 +887,110 @@ class Popup(ctk.CTkToplevel):
         btn(c, "OK", self.destroy, "accent" if danger else "primary", width=110).pack(pady=14)
         if auto_close:
             self.after(auto_close, lambda: self.winfo_exists() and self.destroy())
+
+
+def render_instructions(tx, t):
+    tx.configure(state="normal")
+    tx.delete("1.0", "end")
+    n = 0
+    for line in t.instructions:
+        if line.startswith("   "):
+            tx.insert("end", line.strip() + "\n", "quote")
+        else:
+            n += 1
+            tx.insert("end", f"{n}.  ", "num")
+            tx.insert("end", line + "\n")
+        tx.insert("end", "\n" if not line.startswith("   ") else "")
+    tx.insert("end", "Save inside the test folder with the exact file name.", "hint")
+    tx.configure(state="disabled")
+
+
+class MiniBar(ctk.CTkToplevel):
+    """Small always-on-top question box, so Office can stay full screen."""
+    ALPHAS = (1.0, 0.85, 0.7)
+
+    def __init__(self, view):
+        super().__init__(view.app, fg_color=BG)
+        self.view = view
+        self.collapsed = False
+        self.alpha_i = 0
+        self.title("Questions")
+        self.attributes("-topmost", True)
+        if sys.platform == "win32":
+            try:
+                self.attributes("-toolwindow", True)          # thin title bar, no taskbar button
+            except tk.TclError:
+                pass
+        scale = max(ctk.ScalingTracker.get_window_scaling(self), 0.1)
+        sw = int(self.winfo_screenwidth() / scale)
+        self.geometry(f"400x360+{max(0, sw - 420)}+40")
+        self.minsize(300, 44)
+        self.protocol("WM_DELETE_WINDOW", self.back_to_full)
+
+        head = ctk.CTkFrame(self, fg_color=NAVY, corner_radius=0)
+        head.pack(fill="x")
+        self.timer = ctk.CTkLabel(head, text="", font=ctk.CTkFont(family=MONO, size=18, weight="bold"),
+                                  text_color="white", fg_color=NAVY_DARK, corner_radius=8, width=78, height=30)
+        self.timer.pack(side="left", padx=6, pady=6)
+        self.task_lbl = ctk.CTkLabel(head, text="", font=F(12, "bold"), text_color="white", anchor="w")
+        self.task_lbl.pack(side="left", fill="x", expand=True, padx=4)
+        small = dict(width=30, height=28, corner_radius=8, font=F(13, "bold"), fg_color=NAVY_DARK,
+                     hover_color="#06214F", text_color="white")
+        ctk.CTkButton(head, text="⤢", command=self.back_to_full, **small).pack(side="right", padx=(2, 6))
+        self.fold_b = ctk.CTkButton(head, text="▴", command=self.toggle, **small)
+        self.fold_b.pack(side="right", padx=2)
+        ctk.CTkButton(head, text="◐", command=self.see_through, **small).pack(side="right", padx=2)
+
+        self.body = ctk.CTkFrame(self, fg_color=BG, corner_radius=0)
+        self.body.pack(fill="both", expand=True)
+        self.file_lbl = label(self.body, "", 12, "bold", NAVY, anchor="w")
+        self.file_lbl.pack(fill="x", padx=10, pady=(6, 0))
+        foot = ctk.CTkFrame(self.body, fg_color="transparent")
+        foot.pack(side="bottom", fill="x", padx=8, pady=6)
+        b = dict(height=30, font=F(12, "bold"))
+        btn(foot, "◀", lambda: view.move(-1), "ghost", width=36, **b).pack(side="left")
+        btn(foot, "▶", lambda: view.move(1), "ghost", width=36, **b).pack(side="left", padx=4)
+        if view.allow_check:
+            btn(foot, "Check", view.check_one, width=70, **b).pack(side="left", padx=4)
+        btn(foot, "Submit", lambda: (view.close_mini(), view.submit()), "accent", width=76, **b).pack(side="right")
+        self.text = textbox(self.body, size=12)
+        self.text.pack(fill="both", expand=True, padx=6)
+        self.text.tag_config("quote", foreground="#334", lmargin1=18, lmargin2=18, background="#EEF2FA")
+        self.text.tag_config("num", foreground=NAVY)
+        self.text.tag_config("hint", foreground="#7A5B00")
+        view.block_copy(self.text)
+        self.show_task()
+
+    def show_task(self):
+        t = self.view.current()
+        self.task_lbl.configure(text=f"{self.view.cur + 1}/{len(self.view.tasks)}  {APP_SHORT[t.app]} · {t.title}")
+        self.file_lbl.configure(text=f"Save as: {t.file}" + (f"   (starter: {', '.join(t.starters)})" if t.starters else ""))
+        render_instructions(self.text, t)
+
+    def set_timer(self, text, colour):
+        self.timer.configure(text=text, fg_color=NAVY_DARK if colour == NAVY else colour)
+        if self.collapsed:
+            self.title(f"{text} – Questions")
+
+    def toggle(self):
+        self.collapsed = not self.collapsed
+        if self.collapsed:
+            self._size = self.geometry().split("+")[0]
+            self.body.pack_forget()
+            w = self._size.split("x")[0]
+            self.geometry(f"{w}x44")
+            self.fold_b.configure(text="▾")
+        else:
+            self.body.pack(fill="both", expand=True)
+            self.geometry(getattr(self, "_size", "400x360"))
+            self.fold_b.configure(text="▴")
+
+    def see_through(self):
+        self.alpha_i = (self.alpha_i + 1) % len(self.ALPHAS)
+        self.attributes("-alpha", self.ALPHAS[self.alpha_i])
+
+    def back_to_full(self):
+        self.view.close_mini()
 
 
 def make_tree(parent):

@@ -45,6 +45,10 @@ The window can be made as small as half the screen, and every screen rearranges 
 During a test, press **Split screen**: open Office windows move to the left and the app moves to the right, on top.
 Windows key + Left/Right arrow (Windows Snap) also works.
 
+**Mini bar**: keeps Office full screen. A small always-on-top box shows the timer, the current task's steps,
+◀ ▶ to change task, Check and Submit. Drag it anywhere, resize it, press ◐ to make it see-through,
+▴ to fold it down to just the timer, and ⤢ to go back to the full window.
+
 ## Retaking a test
 
 Every retake makes a new `Attempt` folder inside the same test folder (Attempt 1, Attempt 2 …), so your old
