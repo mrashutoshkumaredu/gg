@@ -430,15 +430,15 @@ class DrillPicker(ctk.CTkFrame):
               13, color=MUTED).pack(anchor="w", pady=(2, 10))
 
         self.vars = {d.id: tk.BooleanVar(value=False) for d in DRILLS}
-        self.list = ctk.CTkScrollableFrame(self, fg_color=CARD, corner_radius=14, border_width=1, border_color=LINE)
-        self.list.pack(fill="both", expand=True)
-
         bar = ctk.CTkFrame(self, fg_color="transparent")
-        bar.pack(fill="x", pady=(12, 0))
+        bar.pack(side="bottom", fill="x", pady=(12, 0))
         btn(bar, "← Home", app.show_home, "ghost", width=110).pack(side="left")
         btn(bar, "Start selected", self.start, "accent", width=170).pack(side="right")
         self.summary = label(bar, "", 13, color=MUTED)
         self.summary.pack(side="right", padx=14)
+        self.list = ctk.CTkScrollableFrame(self, fg_color=CARD, corner_radius=14, border_width=1, border_color=LINE)
+        self.list.pack(fill="both", expand=True)
+
         self.render()
 
     def render(self, *_):
@@ -627,6 +627,8 @@ class TestView(ctk.CTkFrame):
         self.compact = None
         self.layout(False)
         self.bind("<Configure>", self.on_resize)
+        app.bind("<Left>", lambda e: self.move(-1))           # ← → change task (main window and mini bar)
+        app.bind("<Right>", lambda e: self.move(1))
 
         self.pick(self.items[0])
         self.monitor.start()
@@ -671,6 +673,11 @@ class TestView(ctk.CTkFrame):
             self.b_tools.pack(side="left")
             self.b_acts.pack(side="right")
             self.log.pack(fill="x", padx=12, pady=(0, 10))
+
+    def destroy(self):
+        for k in ("<Left>", "<Right>"):
+            self.app.unbind(k)
+        super().destroy()
 
     def open_mini(self):
         """Small floating question box; the main window goes to the taskbar."""
@@ -959,6 +966,8 @@ class MiniBar(ctk.CTkToplevel):
         self.text.tag_config("num", foreground=NAVY)
         self.text.tag_config("hint", foreground="#7A5B00")
         view.block_copy(self.text)
+        self.bind("<Left>", lambda e: view.move(-1))
+        self.bind("<Right>", lambda e: view.move(1))
         self.show_task()
 
     def show_task(self):
@@ -1102,7 +1111,7 @@ class ResultPopup(ctk.CTkToplevel):
         if first:
             tree.selection_set(first)
         bar = ctk.CTkFrame(self, fg_color="transparent")
-        bar.pack(fill="x", padx=14, pady=12)
+        bar.pack(side="bottom", fill="x", padx=14, pady=12, before=body)
         label(bar, "Fix the mistakes, save, and press 'Check task' again.", 12, color=MUTED).pack(side="left")
         btn(bar, "Close", self.destroy, width=100).pack(side="right")
 
@@ -1270,6 +1279,7 @@ class QuizView(ctk.CTkFrame):
         self.i = 0
         self.score = 0
         self.answers = []
+        self.picked = {}
 
         self.box = card(self)
         self.box.place(relx=0.5, rely=0.47, anchor="center", relwidth=0.62, relheight=0.94)
@@ -1290,17 +1300,27 @@ class QuizView(ctk.CTkFrame):
         self.q.pack(anchor="w", padx=28, pady=(0, 16))
         self.opts = []
         for _ in range(4):
-            b = ctk.CTkButton(self.box, text="", height=50, corner_radius=12, font=F(16, "bold"), anchor="w",
+            b = ctk.CTkButton(self.box, text="", height=44, corner_radius=12, font=F(15, "bold"), anchor="w",
                               fg_color=CARD, hover_color=NAVY_SOFT, text_color=INK, border_width=1, border_color="#C9D3E6")
             b.pack(fill="x", padx=28, pady=5)
             self.opts.append(b)
         self.feedback = label(self.box, "", 15, "bold")
         self.feedback.pack(anchor="w", padx=28, pady=10)
         bar = ctk.CTkFrame(self.box, fg_color="transparent")
-        bar.pack(side="bottom", fill="x", padx=28, pady=20)
+        bar.pack(side="bottom", fill="x", padx=28, pady=16, before=top)     # reserve room for the buttons first
         btn(bar, "← Home", app.show_home, "ghost", width=110).pack(side="left")
-        self.next_b = btn(bar, "Next →", self.next, width=120)
+        self.next_b = btn(bar, "Next →", self.next, width=110)
         self.next_b.pack(side="right")
+        self.prev_b = btn(bar, "← Back", self.prev, "ghost", width=90)
+        self.prev_b.pack(side="right", padx=8)
+        label(bar, "Keys: A–D answer · ← → move · Enter next", 11, color=MUTED).pack(side="left", padx=12)
+        # keyboard: A-D or 1-4 to answer, Enter for the next question
+        for keys, i in ((("a", "A", "1"), 0), (("b", "B", "2"), 1), (("c", "C", "3"), 2), (("d", "D", "4"), 3)):
+            for k in keys:
+                app.bind(f"<KeyPress-{k}>", lambda e, i=i: self.key_pick(i))
+        app.bind("<Return>", lambda e: self.opts and self.next())
+        app.bind("<Right>", lambda e: self.opts and self.next())
+        app.bind("<Left>", lambda e: self.prev())
         self.show()
 
     def layout(self, compact):
@@ -1320,12 +1340,39 @@ class QuizView(ctk.CTkFrame):
                         text_color=INK, command=lambda o=opt: self.pick(o))
         self.feedback.configure(text="")
         self.next_b.configure(state="disabled")
+        self.prev_b.configure(state="normal" if self.i > 0 else "disabled")
+        if self.i in self.picked:                     # going back: show the earlier answer again
+            self.mark(q, self.picked[self.i])
+
+    def prev(self):
+        if self.i > 0 and self.opts:
+            self.i -= 1
+            self.show()
+
+    def key_pick(self, i):
+        if self.winfo_exists() and self.i < len(self.qs) and self.opts and self.opts[0].winfo_exists() \
+                and self.opts[i].cget("state") == "normal":
+            self.pick(self.qs[self.i]["options"][i])
+
+    def destroy(self):
+        for k in ("a", "A", "1", "b", "B", "2", "c", "C", "3", "d", "D", "4"):
+            self.app.unbind(f"<KeyPress-{k}>")
+        for k in ("<Return>", "<Right>", "<Left>"):
+            self.app.unbind(k)
+        super().destroy()
 
     def pick(self, opt):
         q = self.qs[self.i]
+        if self.i in self.picked:
+            return
+        self.picked[self.i] = opt
         ok = opt == q["answer"]
         self.score += ok
         self.answers.append((q, opt, ok))
+        self.mark(q, opt)
+
+    def mark(self, q, opt):
+        ok = opt == q["answer"]
         for b, o in zip(self.opts, q["options"]):
             b.configure(state="disabled", text_color_disabled=INK)
             if o == q["answer"]:
@@ -1338,6 +1385,8 @@ class QuizView(ctk.CTkFrame):
         self.next_b.configure(state="normal")
 
     def next(self):
+        if self.i not in self.picked:
+            return
         self.i += 1
         if self.i < len(self.qs):
             self.show()
@@ -1346,6 +1395,12 @@ class QuizView(ctk.CTkFrame):
             w.destroy()
         pct = self.score / len(self.qs) * 100
         vtext, vcol = verdict(pct)
+        self.opts = []
+        bar = ctk.CTkFrame(self.box, fg_color="transparent")
+        bar.pack(side="bottom", fill="x", padx=28, pady=(0, 20))
+        btn(bar, "← Home", self.app.show_home, "ghost", width=110).pack(side="left")
+        btn(bar, "New quiz", lambda: self.app.switch(QuizView, make_quiz(20, self.quiz_app), self.quiz_app), "accent",
+            width=130).pack(side="right")
         label(self.box, "Quiz finished", 15, "bold", MUTED).pack(anchor="w", padx=28, pady=(22, 0))
         label(self.box, f"{self.score} / {len(self.qs)}", 40, "bold", NAVY).pack(anchor="w", padx=28)
         label(self.box, vtext, 15, "bold", vcol).pack(anchor="w", padx=28)
@@ -1357,11 +1412,6 @@ class QuizView(ctk.CTkFrame):
                      ("" if ok else f"   (you chose {opt})") + "\n", "ok" if ok else "bad")
         t.configure(state="disabled")
         t.pack(fill="both", expand=True, padx=20, pady=12)
-        bar = ctk.CTkFrame(self.box, fg_color="transparent")
-        bar.pack(fill="x", padx=28, pady=(0, 20))
-        btn(bar, "← Home", self.app.show_home, "ghost", width=110).pack(side="left")
-        btn(bar, "New quiz", lambda: self.app.switch(QuizView, make_quiz(20, self.quiz_app), self.quiz_app), "accent",
-            width=130).pack(side="right")
         try:
             save_attempt({"when": time.strftime("%Y-%m-%dT%H:%M:%S"), "mode": "Shortcut quiz", "title": "Shortcut Key Quiz",
                           "folder": "", "score": self.score, "out_of": len(self.qs), "sections": {}, "seconds_used": 0,

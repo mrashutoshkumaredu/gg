@@ -49,6 +49,11 @@ Windows key + Left/Right arrow (Windows Snap) also works.
 ◀ ▶ to change task, Check and Submit. Drag it anywhere, resize it, press ◐ to make it see-through,
 ▴ to fold it down to just the timer, and ⤢ to go back to the full window.
 
+## Keyboard
+
+- Quiz: **A–D** (or 1–4) to answer, **→** or **Enter** for the next question, **←** to look back.
+- Test screen and mini bar: **←** and **→** move between tasks.
+
 ## Retaking a test
 
 Every retake makes a new `Attempt` folder inside the same test folder (Attempt 1, Attempt 2 …), so your old
