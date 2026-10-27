@@ -320,3 +320,55 @@ class Monitor:
                 more = f" (+{len(new_logs) - 4} more)" if len(new_logs) > 4 else ""
                 self.log("excel", "Formula entered – " + "; ".join(shown) + more)
         self._track_docs("excel", items)
+
+
+# ---------------------------------------------------------------- split screen
+
+def arrange_split(tk_root, app_share=0.42):
+    """Put the open Office windows on the left and the app on the right of the screen.
+    Returns how many Office windows were moved (always 0 outside Windows)."""
+    if not IS_WIN:
+        sw, sh = tk_root.winfo_screenwidth(), tk_root.winfo_screenheight()
+        w = int(sw * app_share)
+        tk_root.wm_geometry(f"{w}x{sh - 80}+{sw - w}+0")
+        return 0
+    user32 = ctypes.windll.user32
+
+    class RECT(ctypes.Structure):
+        _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long), ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+    work = RECT()
+    user32.SystemParametersInfoW(48, 0, ctypes.byref(work), 0)          # SPI_GETWORKAREA (without the taskbar)
+    width, height = work.right - work.left, work.bottom - work.top
+    split = work.left + int(width * (1 - app_share))
+
+    office = []
+
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+    def each(hwnd, _):
+        if user32.IsWindowVisible(hwnd) and user32.GetWindowTextLengthW(hwnd) > 0 and not user32.GetWindow(hwnd, 4):
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            h = _kernel32.OpenProcess(0x1000, False, pid.value)
+            if h:
+                size = wintypes.DWORD(1024)
+                buf = ctypes.create_unicode_buffer(1024)
+                if _kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+                    if os.path.basename(buf.value).lower() in EXE_APP:
+                        office.append(hwnd)
+                _kernel32.CloseHandle(h)
+        return True
+
+    user32.EnumWindows(each, 0)
+    flags = 0x0004 | 0x0040                                              # SWP_NOZORDER | SWP_SHOWWINDOW
+    for hwnd in office:
+        user32.ShowWindow(hwnd, 9)                                       # SW_RESTORE (un-maximise / un-minimise)
+        user32.SetWindowPos(hwnd, 0, work.left, work.top, split - work.left, height, flags)
+    try:
+        me = int(tk_root.wm_frame(), 16)
+        tk_root.update_idletasks()
+        user32.ShowWindow(me, 9)
+        user32.SetWindowPos(me, 0, split, work.top, work.right - split, height, flags)
+    except Exception:
+        pass
+    return len(office)

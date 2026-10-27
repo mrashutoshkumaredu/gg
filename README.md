@@ -39,6 +39,12 @@ file is not signed.
 5. After you submit, the app checks your files and shows the result. A printable report
    (`Result_Report.html`) with the full activity timeline is saved in the test folder.
 
+## Split screen
+
+The window can be made as small as half the screen, and every screen rearranges itself when it is narrow.
+During a test, press **Split screen**: open Office windows move to the left and the app moves to the right, on top.
+Windows key + Left/Right arrow (Windows Snap) also works.
+
 ## Retaking a test
 
 Every retake makes a new `Attempt` folder inside the same test folder (Attempt 1, Attempt 2 …), so your old

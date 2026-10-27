@@ -18,7 +18,7 @@ from . import __version__
 from .content import PAPERS, build_paper
 from .content.drills import DRILLS
 from .core import APP_LABEL, all_file_names, grade_task, grade_tasks
-from .monitor import APP_NAME, Monitor
+from .monitor import APP_NAME, Monitor, arrange_split
 from .report import build as build_report, build_instructions
 from .session import (DEFAULT_STUDENT, current_student, default_root, delete_attempt, export_results, fmt_secs,
                       load_history, load_settings, make_problem_report, make_record, new_attempt_folder,
@@ -88,6 +88,16 @@ def textbox(parent, height=200, mono=False, size=14):
     return t
 
 
+def responsive(view, limit=900):
+    """Call view.layout(compact) when the window crosses the 'narrow' width (e.g. split screen)."""
+    width = view.winfo_width() / max(ctk.ScalingTracker.get_window_scaling(view), 0.1)
+    if width < 50:
+        return
+    compact = width < limit
+    if compact != view.compact:
+        view.layout(compact)
+
+
 def open_path(p):
     p = str(p)
     try:
@@ -122,8 +132,10 @@ class App(ctk.CTk):
         ctk.set_appearance_mode("light")
         super().__init__(fg_color=BG)
         self.title(f"{APP_TITLE}  v{__version__}")
-        self.geometry("1180x780")
-        self.minsize(980, 660)
+        scale = max(ctk.ScalingTracker.get_window_scaling(self), 0.1)      # Windows display scaling, e.g. 125%
+        sw, sh = int(self.winfo_screenwidth() / scale), int(self.winfo_screenheight() / scale)
+        self.geometry(f"{min(1180, sw - 40)}x{min(780, sh - 90)}")
+        self.minsize(420, 480)                      # small enough for half-screen / Windows Snap
         style_tree()
 
         head = ctk.CTkFrame(self, fg_color=NAVY, corner_radius=0, height=64)
@@ -137,6 +149,7 @@ class App(ctk.CTk):
         label(box, "Skill Test for Assistant / UDC / JPA / Stenographer", 11, color="#C9D6EE").pack(anchor="w")
         self.head_right = label(head, "Word 35  ·  Excel 35  ·  PowerPoint 30  ·  75 min", 12, color="#C9D6EE")
         self.head_right.pack(side="right", padx=20)
+        self.bind("<Configure>", self._head_fit, add="+")
         ctk.CTkFrame(self, fg_color=SAFFRON, corner_radius=0, height=4).pack(fill="x")
 
         self.body = ctk.CTkFrame(self, fg_color=BG, corner_radius=0)
@@ -144,6 +157,15 @@ class App(ctk.CTk):
         self.frame = None
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.show_home()
+
+    def _head_fit(self, e=None):
+        if e is not None and e.widget is not self:
+            return
+        narrow = self.winfo_width() / max(ctk.ScalingTracker.get_window_scaling(self), 0.1) < 900
+        if narrow and self.head_right.winfo_manager():
+            self.head_right.pack_forget()
+        elif not narrow and not self.head_right.winfo_manager():
+            self.head_right.pack(side="right", padx=20)
 
     def on_close(self):
         f = self.frame
@@ -205,7 +227,7 @@ class App(ctk.CTk):
 
 # =================================================================== home
 
-class Home(ctk.CTkFrame):
+class Home(ctk.CTkScrollableFrame):
     def __init__(self, parent, app: App):
         super().__init__(parent, fg_color="transparent")
         self.app = app
@@ -221,12 +243,11 @@ class Home(ctk.CTkFrame):
         self.student.pack(side="left", padx=10)
         if len(students()) > 1:
             btn(who, "Remove", self.remove_student, "danger", width=90, height=32).pack(side="left")
-        label(who, "Each student has separate folders, scores and weak areas.", 12, color=MUTED).pack(side="left", padx=12)
+        self.who_note = label(who, "Each student has separate folders, scores and weak areas.", 12, color=MUTED)
 
         # stats strip
         st = stats(load_history())
-        strip = ctk.CTkFrame(self, fg_color="transparent")
-        strip.pack(fill="x", pady=(0, 14))
+        strip = self.strip = ctk.CTkFrame(self, fg_color="transparent")
         items = ([("Tests taken", f"{st['count']}"), ("Best score", f"{st['best']:.0f}%"),
                   ("Last score", f"{st['last']:.0f}%"), ("Average", f"{st['avg']:.0f}%")] if st else
                  [("Welcome!", "Start with Mock Test 1"), ("Format", "Word · Excel · PowerPoint"),
@@ -238,46 +259,71 @@ class Home(ctk.CTkFrame):
             label(c, k, 12, color=MUTED).pack(anchor="w", padx=16, pady=(12, 0))
             label(c, v, 20 if st else 15, "bold", NAVY).pack(anchor="w", padx=16, pady=(0, 12))
 
-        grid = ctk.CTkFrame(self, fg_color="transparent")
-        grid.pack(fill="both", expand=True)
-        for i in (0, 1):
-            grid.grid_columnconfigure(i, weight=1, uniform="c")
-            grid.grid_rowconfigure(i, weight=1, uniform="r")
+        grid = self.grid_ = ctk.CTkFrame(self, fg_color="transparent")
+        self.cards = []
 
         c = self.mode_card(grid, 0, 0, "★", NAVY, "Full Mock Test",
                            "All three sections in 75 minutes, marked out of 100.\nYour work is checked after you submit.")
-        self.mock = option(c.controls, names)
+        self.mock = option(c.controls, names, 150)
         self.mock.pack(side="left")
-        btn(c.controls, "Start full mock", self.start_mock, "accent", width=170).pack(side="right")
+        btn(c.controls, "Start full mock", self.start_mock, "accent", width=150).pack(side="right")
 
         c = self.mode_card(grid, 0, 1, "◎", APP_COL["excel"], "Section Practice",
                            "Only Word, Excel or PowerPoint, with a shorter timer.\nCheck each task as you go.")
-        self.sec_paper = option(c.controls, names, 140)
+        self.sec_paper = option(c.controls, names, 128)
         self.sec_paper.pack(side="left")
-        self.sec_app = option(c.controls, ["Word", "Excel", "PowerPoint"], 130)
-        self.sec_app.pack(side="left", padx=8)
-        btn(c.controls, "Start", self.start_section, width=100).pack(side="right")
+        self.sec_app = option(c.controls, ["Word", "Excel", "PowerPoint"], 118)
+        self.sec_app.pack(side="left", padx=6)
+        btn(c.controls, "Start", self.start_section, width=80).pack(side="right")
 
         c = self.mode_card(grid, 1, 0, "✎", APP_COL["ppt"], "Topic Drills",
                            f"{len(DRILLS)} short tasks, one syllabus topic each: Mail Merge,\nVLOOKUP, Subtotal, Slide Master and more.")
-        btn(c.controls, "Choose drills", lambda: app.switch(DrillPicker), width=170).pack(side="right")
+        btn(c.controls, "Choose drills", lambda: app.switch(DrillPicker), width=150).pack(side="right")
 
         c = self.mode_card(grid, 1, 1, "⌨", APP_COL["word"], "Shortcut Key Quiz",
                            "20 quick questions on keyboard shortcuts\nfor Word, Excel and PowerPoint.")
-        self.quiz_app = option(c.controls, ["All programs", "Word", "Excel", "PowerPoint"], 160)
+        self.quiz_app = option(c.controls, ["All programs", "Word", "Excel", "PowerPoint"], 150)
         self.quiz_app.pack(side="left")
-        btn(c.controls, "Start quiz", self.start_quiz, width=130).pack(side="right")
+        btn(c.controls, "Start quiz", self.start_quiz, width=110).pack(side="right")
 
-        bar = ctk.CTkFrame(self, fg_color="transparent")
-        bar.pack(fill="x", pady=(14, 0))
-        btn(bar, "My progress & retakes", lambda: app.switch(HistoryView), "ghost", width=200).pack(side="left")
-        btn(bar, "How it works", self.help, "ghost", width=130).pack(side="left", padx=8)
+        bar = self.bar = ctk.CTkFrame(self, fg_color="transparent")
+        self.bar_a = ctk.CTkFrame(bar, fg_color="transparent")
+        self.bar_b = ctk.CTkFrame(bar, fg_color="transparent")
+        btn(self.bar_a, "My progress & retakes", lambda: app.switch(HistoryView), "ghost", width=190).pack(side="left")
+        btn(self.bar_a, "How it works", self.help, "ghost", width=120).pack(side="left", padx=8)
         self.strict = tk.BooleanVar(value=bool(load_settings().get("strict")))
-        ctk.CTkSwitch(bar, text="Strict exam mode", variable=self.strict, font=F(12), progress_color=NAVY,
-                      command=self.toggle_strict).pack(side="left", padx=10)
-        btn(bar, "Change", self.change_root, "ghost", width=90).pack(side="right")
-        self.root_lbl = label(bar, f"Test folders: {default_root()}", 12, color=MUTED)
-        self.root_lbl.pack(side="right", padx=10)
+        ctk.CTkSwitch(self.bar_a, text="Strict exam mode", variable=self.strict, font=F(12), progress_color=NAVY,
+                      command=self.toggle_strict).pack(side="left", padx=6)
+        btn(self.bar_b, "Change", self.change_root, "ghost", width=80).pack(side="right")
+        self.root_lbl = label(self.bar_b, f"Test folders: {default_root()}", 12, color=MUTED)
+        self.root_lbl.pack(side="right", padx=8)
+
+        self.compact = None
+        self.layout(False)
+        self.bind("<Configure>", lambda e: responsive(self))
+
+    def layout(self, compact):
+        self.compact = compact
+        for w in (self.who_note, self.strip, self.grid_, self.bar, self.bar_a, self.bar_b):
+            w.pack_forget()
+        if not compact:
+            self.who_note.pack(side="left", padx=12)
+            self.strip.pack(fill="x", pady=(0, 14))
+        self.grid_.pack(fill="both", expand=True)
+        for i in (0, 1):
+            self.grid_.grid_columnconfigure(i, weight=0 if (compact and i) else 1, uniform="" if compact else "c")
+        for i, k in enumerate(self.cards):
+            r, c = (i, 0) if compact else divmod(i, 2)
+            k.grid(row=r, column=c, sticky="nsew", padx=(0, 0) if compact else ((0, 8) if c == 0 else (8, 0)), pady=8)
+            k.desc.configure(text=k.desc_text.replace("\n", " ") if compact else k.desc_text,
+                             wraplength=340 if compact else 0)
+        self.bar.pack(fill="x", pady=(8, 0))
+        if compact:
+            self.bar_a.pack(side="top", anchor="w")
+            self.bar_b.pack(side="top", fill="x", pady=(8, 0))
+        else:
+            self.bar_a.pack(side="left")
+            self.bar_b.pack(side="right")
 
     def toggle_strict(self):
         s = load_settings()
@@ -289,15 +335,17 @@ class Home(ctk.CTkFrame):
 
     def mode_card(self, grid, r, c, icon, colour, title, desc):
         k = card(grid)
-        k.grid(row=r, column=c, sticky="nsew", padx=(0 if c == 0 else 8, 0 if c else 8), pady=(0 if r == 0 else 8, 0 if r else 8))
+        self.cards.append(k)
         top = ctk.CTkFrame(k, fg_color="transparent")
         top.pack(fill="x", padx=20, pady=(18, 6))
         ctk.CTkLabel(top, text=icon, width=44, height=44, corner_radius=22, fg_color=colour, text_color="white",
                      font=F(20, "bold")).pack(side="left")
         label(top, title, 18, "bold").pack(side="left", padx=12)
-        label(k, desc, 13, color=MUTED, justify="left").pack(anchor="w", padx=20)
+        k.desc_text = desc
+        k.desc = label(k, desc, 13, color=MUTED, justify="left")
+        k.desc.pack(anchor="w", padx=20)
         k.controls = ctk.CTkFrame(k, fg_color="transparent")
-        k.controls.pack(side="bottom", fill="x", padx=20, pady=18)
+        k.controls.pack(side="bottom", fill="x", padx=20, pady=(26, 18))
         return k
 
     def pick_student(self, value):
@@ -479,61 +527,78 @@ class TestView(ctk.CTkFrame):
         self.known = all_file_names(tasks)
         self.monitor = Monitor(self.folder, on_event=self.events_q.put)
 
-        # ---- top bar
+        # ---- top bar (wide: one line; narrow window: two lines)
         top = card(self)
         top.pack(fill="x")
-        left = ctk.CTkFrame(top, fg_color="transparent")
-        left.pack(side="left", padx=16, pady=10)
-        row = ctk.CTkFrame(left, fg_color="transparent")
+        self.t_left = ctk.CTkFrame(top, fg_color="transparent")
+        row = ctk.CTkFrame(self.t_left, fg_color="transparent")
         row.pack(anchor="w")
-        label(row, title, 18, "bold").pack(side="left")
-        pill(row, f"Attempt {self.attempt}", NAVY_SOFT, NAVY).pack(side="left", padx=10)
-        pill(row, mode, "#FFF1E0", "#9A4D00").pack(side="left")
+        self.t_title = label(row, title, 18, "bold")
+        self.t_title.pack(side="left")
+        self.t_pills = [pill(row, f"Attempt {self.attempt}", NAVY_SOFT, NAVY), pill(row, mode, "#FFF1E0", "#9A4D00")]
         rel = self.folder.relative_to(default_root()) if default_root() in self.folder.parents else self.folder
-        flink = ctk.CTkLabel(left, text=f"Folder: …\\{rel}  (click to open)", font=F(11),
-                             text_color=MUTED, cursor="hand2")
-        flink.pack(anchor="w")
-        flink.bind("<Button-1>", lambda e: open_path(self.folder))
+        self.flink = ctk.CTkLabel(self.t_left, text=f"Folder: …\\{rel}  (click to open)", font=F(11),
+                                  text_color=MUTED, cursor="hand2")
+        self.flink.bind("<Button-1>", lambda e: open_path(self.folder))
 
-        btn(top, "Submit test", self.submit, "accent", width=140, height=44).pack(side="right", padx=(8, 16))
-        self.timer = ctk.CTkLabel(top, text=fmt_secs(seconds), font=ctk.CTkFont(family=MONO, size=26, weight="bold"),
-                                  fg_color=NAVY, text_color="white", corner_radius=10, width=120, height=44)
-        self.timer.pack(side="right", padx=8)
+        self.t_ctrl = ctk.CTkFrame(top, fg_color="transparent")
+        btn(self.t_ctrl, "Submit", self.submit, "accent", width=100, height=44).pack(side="right", padx=(6, 0))
+        self.timer = ctk.CTkLabel(self.t_ctrl, text=fmt_secs(seconds), font=ctk.CTkFont(family=MONO, size=24, weight="bold"),
+                                  fg_color=NAVY, text_color="white", corner_radius=10, width=110, height=44)
+        self.timer.pack(side="right", padx=6)
+        btn(self.t_ctrl, "Split screen", self.split_screen, "ghost", width=110, height=44).pack(side="right", padx=6)
         self.topmost = tk.BooleanVar(value=False)
-        ctk.CTkSwitch(top, text="Keep on top", variable=self.topmost, font=F(12), progress_color=NAVY,
-                      command=lambda: app.attributes("-topmost", self.topmost.get())).pack(side="right", padx=8)
-
+        self.top_switch = ctk.CTkSwitch(self.t_ctrl, text="Keep on top", variable=self.topmost, font=F(12),
+                                        progress_color=NAVY, command=lambda: app.attributes("-topmost", self.topmost.get()))
 
         # ---- body
         body = ctk.CTkFrame(self, fg_color="transparent")
-        body.pack(fill="both", expand=True, pady=12)
+        body.pack(fill="both", expand=True, pady=10)
         body.grid_columnconfigure(1, weight=1)
         body.grid_rowconfigure(0, weight=1)
 
-        side = ctk.CTkScrollableFrame(body, width=270, fg_color="transparent", label_text="Tasks",
-                                      label_font=F(13, "bold"), label_fg_color="transparent", label_text_color=MUTED)
-        side.grid(row=0, column=0, sticky="nsw", padx=(0, 12))
+        self.side = ctk.CTkScrollableFrame(body, width=250, fg_color="transparent", label_text="Tasks",
+                                           label_font=F(13, "bold"), label_fg_color="transparent", label_text_color=MUTED)
         self.items = []
         for i, t in enumerate(tasks):
-            it = TaskItem(side, t, self.pick)
+            it = TaskItem(self.side, t, self.pick)
             it.pack(fill="x", pady=4, padx=2)
             self.items.append(it)
 
         main = card(body)
         main.grid(row=0, column=1, sticky="nsew")
-        head = ctk.CTkFrame(main, fg_color="transparent")
-        head.pack(fill="x", padx=20, pady=(16, 4))
-        self.h_app = pill(head, "", NAVY)
+        # task chooser used instead of the side list when the window is narrow
+        self.task_menu = option(main, [f"{i + 1}. {APP_SHORT[t.app]} – {t.title}" for i, t in enumerate(tasks)], 300)
+        self.task_menu.configure(command=lambda v: self.pick(self.items[int(v.split(".")[0]) - 1]))
+        self.head = ctk.CTkFrame(main, fg_color="transparent")
+        self.head.pack(fill="x", padx=20, pady=(16, 4))
+        self.h_app = pill(self.head, "", NAVY)
         self.h_app.pack(side="left")
-        self.h_title = label(head, "", 20, "bold")
+        self.h_title = label(self.head, "", 20, "bold")
         self.h_title.pack(side="left", padx=10)
-        self.h_marks = pill(head, "", NAVY_SOFT, NAVY)
+        self.h_marks = pill(self.head, "", NAVY_SOFT, NAVY)
         self.h_marks.pack(side="right")
         self.h_file = label(main, "", 13, "bold", NAVY)
         self.h_file.pack(anchor="w", padx=20)
         self.h_start = label(main, "", 12, color=MUTED)
         self.h_start.pack(anchor="w", padx=20)
         ctk.CTkFrame(main, fg_color=LINE, height=1).pack(fill="x", padx=20, pady=8)
+
+        btns = ctk.CTkFrame(main, fg_color="transparent")
+        btns.pack(side="bottom", fill="x", padx=16, pady=12)
+        self.b_tools = ctk.CTkFrame(btns, fg_color="transparent")
+        self.b_acts = ctk.CTkFrame(btns, fg_color="transparent")
+        btn(self.b_tools, "Open folder", lambda: open_path(self.folder), "ghost", width=104).pack(side="left")
+        btn(self.b_tools, "In Hindi", self.hindi, "ghost", width=90).pack(side="left", padx=6)
+        self.b_starter = btn(self.b_tools, "Starter file", self.open_starter, "ghost", width=104)
+        self.b_starter.pack(side="left")
+        btn(self.b_acts, "→", lambda: self.move(1), "ghost", width=44).pack(side="right")
+        btn(self.b_acts, "←", lambda: self.move(-1), "ghost", width=44).pack(side="right", padx=6)
+        if show_hints:
+            btn(self.b_acts, "Model answer", self.hint, "ghost", width=120).pack(side="right")
+        if allow_check:
+            btn(self.b_acts, "Check task", self.check_one, width=104).pack(side="right", padx=6)
+
         self.text = textbox(main, size=14)
         self.text.pack(fill="both", expand=True, padx=14)
         self.text.tag_config("quote", foreground="#334", lmargin1=30, lmargin2=30, background="#F6F8FC")
@@ -541,34 +606,24 @@ class TestView(ctk.CTkFrame):
         self.text.tag_config("hint", foreground="#7A5B00")
         self.block_copy(self.text)
 
-        btns = ctk.CTkFrame(main, fg_color="transparent")
-        btns.pack(fill="x", padx=20, pady=14)
-        btn(btns, "Open folder", lambda: open_path(self.folder), "ghost", width=110).pack(side="left")
-        btn(btns, "In Hindi", self.hindi, "ghost", width=100).pack(side="left", padx=8)
-        self.b_starter = btn(btns, "Starter file", self.open_starter, "ghost", width=110)
-        self.b_starter.pack(side="left")
-        if allow_check:
-            btn(btns, "Check task", self.check_one, width=110).pack(side="left", padx=8)
-        if show_hints:
-            btn(btns, "Model answer", self.hint, "ghost", width=120).pack(side="left")
-        btn(btns, "→", lambda: self.move(1), "ghost", width=44).pack(side="right")
-        btn(btns, "←", lambda: self.move(-1), "ghost", width=44).pack(side="right", padx=6)
-
         # ---- activity
         act = card(self)
         act.pack(fill="x")
         ah = ctk.CTkFrame(act, fg_color="transparent")
         ah.pack(fill="x", padx=16, pady=(10, 4))
         label(ah, "Live activity", 13, "bold").pack(side="left")
-        label(ah, "  tracked automatically", 12, color=MUTED).pack(side="left")
         self.chips = {}
         for k in ("ppt", "excel", "word"):
             c = pill(ah, f"{APP_SHORT[k]} 0:00", APP_COL[k], size=11)
             c.pack(side="right", padx=3)
             self.chips[k] = c
-        self.log = textbox(act, height=96, mono=True, size=11)
-        self.log.pack(fill="x", padx=12, pady=(0, 10))
+        self.log = textbox(act, height=90, mono=True, size=11)
         self.log.configure(state="disabled")
+        self.body_ = body
+
+        self.compact = None
+        self.layout(False)
+        self.bind("<Configure>", self.on_resize)
 
         self.pick(self.items[0])
         self.monitor.start()
@@ -576,6 +631,52 @@ class TestView(ctk.CTkFrame):
             self.monitor.log("test", "Fix & recheck: correct your files and press 'Check task' or Submit")
         open_path(self.folder)
         self.tick()
+
+    # ---------- adapt to the window size (works in split screen / half screen)
+    def on_resize(self, _=None):
+        width = self.winfo_width() / max(ctk.ScalingTracker.get_window_scaling(self.app), 0.1)
+        compact = width < 900
+        if compact != self.compact:
+            self.layout(compact)
+
+    def layout(self, compact):
+        self.compact = compact
+        for w in (self.t_left, self.t_ctrl, self.flink, self.top_switch, self.task_menu, self.b_tools,
+                  self.b_acts, self.log, *self.t_pills):
+            w.pack_forget()
+        self.side.grid_forget()
+        if compact:
+            self.t_left.pack(side="top", fill="x", padx=14, pady=(10, 0))
+            self.t_ctrl.pack(side="top", fill="x", padx=14, pady=8)
+            self.t_title.configure(font=F(15, "bold"))
+            self.h_title.configure(font=F(16, "bold"), wraplength=260, justify="left")
+            self.h_start.configure(wraplength=360, justify="left")
+            self.task_menu.pack(fill="x", padx=14, pady=(12, 0), before=self.head)
+            self.b_acts.pack(side="top", fill="x")
+            self.b_tools.pack(side="top", fill="x", pady=(8, 0))
+        else:
+            self.t_left.pack(side="left", padx=16, pady=10)
+            for p in self.t_pills:
+                p.pack(side="left", padx=(10, 0))
+            self.flink.pack(anchor="w")
+            self.t_ctrl.pack(side="right", padx=16, pady=10)
+            self.top_switch.pack(side="right", padx=8)
+            self.t_title.configure(font=F(18, "bold"))
+            self.h_title.configure(font=F(20, "bold"), wraplength=0)
+            self.h_start.configure(wraplength=0)
+            self.side.grid(row=0, column=0, sticky="nsw", padx=(0, 12))
+            self.b_tools.pack(side="left")
+            self.b_acts.pack(side="right")
+            self.log.pack(fill="x", padx=12, pady=(0, 10))
+
+    def split_screen(self):
+        """Office on the left, this window on the right (always on top)."""
+        moved = arrange_split(self.app, app_share=0.42)
+        self.topmost.set(True)
+        self.app.attributes("-topmost", True)
+        if moved == 0 and sys.platform == "win32":
+            Popup(self.app, "Split screen", "Open Word, Excel or PowerPoint first, then press Split screen again.\n"
+                  "Tip: you can also press Windows key + Left arrow in Office.", auto_close=7000)
 
     # ---------- no copying of the passages to be typed
     def block_copy(self, box):
@@ -622,6 +723,8 @@ class TestView(ctk.CTkFrame):
         for it in self.items:
             it.select(it is item)
         self.cur = self.items.index(item)
+        t = self.tasks[self.cur]
+        self.task_menu.set(f"{self.cur + 1}. {APP_SHORT[t.app]} – {t.title}")
         self.show_task()
 
     def current(self):
@@ -775,7 +878,7 @@ def make_tree(parent):
     tree = ttk.Treeview(frame, columns=("marks",), show="tree headings", style="Nice.Treeview")
     tree.heading("#0", text="  Task / check", anchor="w")
     tree.heading("marks", text="Marks")
-    tree.column("#0", width=420)
+    tree.column("#0", width=240, minwidth=160, stretch=True)
     tree.column("marks", width=90, anchor="center", stretch=False)
     sb = ctk.CTkScrollbar(frame, command=tree.yview, button_color="#C9D3E6", button_hover_color="#AEB9CE")
     tree.configure(yscrollcommand=sb.set)
@@ -906,19 +1009,19 @@ class ResultView(ctk.CTkFrame):
 
         hero = card(self)
         hero.pack(fill="x")
-        left = ctk.CTkFrame(hero, fg_color="transparent")
-        left.pack(side="left", padx=24, pady=16)
+        left = self.h_left = ctk.CTkFrame(hero, fg_color="transparent")
         row = ctk.CTkFrame(left, fg_color="transparent")
         row.pack(anchor="w")
         label(row, rec["title"], 15, "bold", MUTED).pack(side="left")
         if rec.get("attempt"):
             pill(row, f"Attempt {rec['attempt']}", NAVY_SOFT, NAVY, size=11).pack(side="left", padx=8)
-        label(left, f"{rec['score']:g} / {rec['out_of']:g}", 40, "bold", NAVY).pack(anchor="w")
+        self.big = label(left, f"{rec['score']:g} / {rec['out_of']:g}", 40, "bold", NAVY)
+        self.big.pack(anchor="w")
         label(left, f"{pct:.0f}%  ·  {vtext}", 15, "bold", vcol).pack(anchor="w")
         label(left, f"Time used {fmt_secs(rec['seconds_used'])} of {fmt_secs(rec['seconds_allowed'])}", 12, color=MUTED).pack(anchor="w", pady=(4, 0))
 
-        right = ctk.CTkFrame(hero, fg_color="transparent")
-        right.pack(side="right", padx=24, pady=16, fill="y")
+        right = self.h_right = ctk.CTkFrame(hero, fg_color="transparent")
+        self.bars = []
         for k in ("word", "excel", "ppt"):
             if k not in rec["sections"]:
                 continue
@@ -927,43 +1030,48 @@ class ResultView(ctk.CTkFrame):
             r.pack(fill="x", pady=4)
             label(r, APP_SHORT[k], 13, "bold", APP_COL[k], width=95, anchor="w").pack(side="left")
             pb = ctk.CTkProgressBar(r, width=240, height=12, corner_radius=6, progress_color=APP_COL[k], fg_color="#E6EAF2")
+            self.bars.append(pb)
             pb.set(g / m if m else 0)
             pb.pack(side="left", padx=8)
             label(r, f"{g:g} / {m:g}", 13, "bold", width=70).pack(side="left")
             t = rec.get("app_seconds", {}).get(k)
             label(r, f"⏱ {fmt_secs(t or 0)}", 12, color=MUTED).pack(side="left", padx=6)
 
-        label(self, "Click any line to see what was found, what was expected and how to do it. "
-                    "Click a task name for its model answer.", 12, color=MUTED).pack(anchor="w", pady=(10, 6))
+        self.tip = label(self, "Click any line to see what was found, what was expected and how to do it. "
+                               "Click a task name for its model answer.", 12, color=MUTED, wraplength=900, justify="left")
+        self.tip.pack(anchor="w", pady=(10, 6))
 
-        body = ctk.CTkFrame(self, fg_color="transparent")
+        bar = ctk.CTkFrame(self, fg_color="transparent")
+        bar.pack(side="bottom", fill="x", pady=(12, 0))
+        body = self.body_ = ctk.CTkFrame(self, fg_color="transparent")
         body.pack(fill="both", expand=True)
-        body.grid_columnconfigure(0, weight=3)
-        body.grid_columnconfigure(1, weight=2)
-        body.grid_rowconfigure(0, weight=1)
-        c1 = card(body)
-        c1.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        c1 = self.c1 = card(body)
         fr, self.tree = make_tree(c1)
         fr.pack(fill="both", expand=True, padx=8, pady=8)
-        c2 = card(body)
-        c2.grid(row=0, column=1, sticky="nsew")
+        c2 = self.c2 = card(body)
         self.detail = make_detail(c2)
         self.detail.pack(fill="both", expand=True, padx=8, pady=8)
         self.meta = fill_result_tree(self.tree, rec["results"])
         self.tree.bind("<<TreeviewSelect>>", self.on_select)
 
-        bar = ctk.CTkFrame(self, fg_color="transparent")
-        bar.pack(fill="x", pady=(12, 0))
-        btn(bar, "← Home", app.show_home, "ghost", width=110).pack(side="left")
-        btn(bar, "Report wrong marking", self.report_problem, "ghost", width=180).pack(side="left", padx=8)
-        if rec.get("spec"):
-            btn(bar, "Retake (new numbers)", lambda: app.start(rec["spec"]), "accent", width=180).pack(side="right")
-            if rec.get("folder") and Path(rec["folder"]).exists() and rec["score"] < rec["out_of"]:
-                btn(bar, "Fix & recheck", lambda: app.start(rec["spec"], recheck=rec), width=140).pack(side="right", padx=8)
-        if report:
-            btn(bar, "Printable report", lambda: webbrowser.open(Path(report).as_uri()), "ghost", width=160).pack(side="right", padx=8)
+        self.bar_a = ctk.CTkFrame(bar, fg_color="transparent")
+        self.bar_b = ctk.CTkFrame(bar, fg_color="transparent")
+        self.bar_c = ctk.CTkFrame(bar, fg_color="transparent")
+        btn(self.bar_a, "← Home", app.show_home, "ghost", width=90).pack(side="left")
+        btn(self.bar_a, "Report wrong marking", self.report_problem, "ghost", width=170).pack(side="left", padx=6)
         if rec.get("folder"):
-            btn(bar, "Open folder", lambda: open_path(rec["folder"]), "ghost", width=120).pack(side="right")
+            btn(self.bar_c, "Open folder", lambda: open_path(rec["folder"]), "ghost", width=104).pack(side="left")
+        if report:
+            btn(self.bar_c, "Printable report", lambda: webbrowser.open(Path(report).as_uri()), "ghost",
+                width=140).pack(side="left", padx=6)
+        if rec.get("spec"):
+            btn(self.bar_b, "Retake (new numbers)", lambda: app.start(rec["spec"]), "accent", width=170).pack(side="right")
+            if rec.get("folder") and Path(rec["folder"]).exists() and rec["score"] < rec["out_of"]:
+                btn(self.bar_b, "Fix & recheck", lambda: app.start(rec["spec"], recheck=rec), width=130).pack(side="right", padx=6)
+
+        self.compact = None
+        self.layout(False)
+        self.bind("<Configure>", lambda e: responsive(self, 1000))
 
         first_bad = next((i for i, (k, d) in self.meta.items() if k == "check" and not d["ok"] and d["desc"] != "Note"), None)
         if first_bad:
@@ -974,6 +1082,46 @@ class ResultView(ctk.CTkFrame):
         sel = self.tree.selection()
         if sel and sel[0] in self.meta:
             show_detail(self.detail, *self.meta[sel[0]])
+
+    def layout(self, compact):
+        self.compact = compact
+        for w in (self.h_left, self.h_right, self.bar_a, self.bar_b, self.bar_c):
+            w.pack_forget()
+        self.c1.grid_forget()
+        self.c2.grid_forget()
+        b = self.body_
+        if compact:
+            self.h_left.pack(side="top", anchor="w", padx=18, pady=(12, 4))
+            self.h_right.pack(side="top", fill="x", padx=18, pady=(0, 12))
+            self.big.configure(font=F(30, "bold"))
+            for pb in self.bars:
+                pb.configure(width=140)
+            b.grid_columnconfigure(0, weight=1)
+            b.grid_columnconfigure(1, weight=0)
+            b.grid_rowconfigure(0, weight=3)
+            b.grid_rowconfigure(1, weight=2)
+            self.c1.grid(row=0, column=0, sticky="nsew", pady=(0, 8))
+            self.c2.grid(row=1, column=0, sticky="nsew")
+            self.tip.configure(wraplength=380)
+            self.bar_b.pack(side="top", fill="x")
+            self.bar_a.pack(side="top", fill="x", pady=(8, 0))
+            self.bar_c.pack(side="top", fill="x", pady=(8, 0))
+        else:
+            self.h_left.pack(side="left", padx=24, pady=16)
+            self.h_right.pack(side="right", padx=24, pady=16, fill="y")
+            self.big.configure(font=F(40, "bold"))
+            for pb in self.bars:
+                pb.configure(width=240)
+            b.grid_columnconfigure(0, weight=3)
+            b.grid_columnconfigure(1, weight=2)
+            b.grid_rowconfigure(0, weight=1)
+            b.grid_rowconfigure(1, weight=0)
+            self.c1.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+            self.c2.grid(row=0, column=1, sticky="nsew")
+            self.tip.configure(wraplength=900)
+            self.bar_a.pack(side="left")
+            self.bar_c.pack(side="left", padx=6)
+            self.bar_b.pack(side="right")
 
     def report_problem(self):
         sel = self.tree.selection()
@@ -1004,7 +1152,9 @@ class QuizView(ctk.CTkFrame):
         self.answers = []
 
         self.box = card(self)
-        self.box.place(relx=0.5, rely=0.47, anchor="center", relwidth=0.62, relheight=0.9)
+        self.box.place(relx=0.5, rely=0.47, anchor="center", relwidth=0.62, relheight=0.94)
+        self.compact = None
+        self.bind("<Configure>", lambda e: responsive(self))
         top = ctk.CTkFrame(self.box, fg_color="transparent")
         top.pack(fill="x", padx=28, pady=(22, 4))
         label(top, "Shortcut Key Quiz", 20, "bold").pack(side="left")
@@ -1032,6 +1182,10 @@ class QuizView(ctk.CTkFrame):
         self.next_b = btn(bar, "Next →", self.next, width=120)
         self.next_b.pack(side="right")
         self.show()
+
+    def layout(self, compact):
+        self.compact = compact
+        self.box.place_configure(relwidth=0.98 if compact else 0.62)
 
     def show(self):
         q = self.qs[self.i]
@@ -1106,17 +1260,13 @@ class HistoryView(ctk.CTkFrame):
         top.pack(fill="x")
         label(top, "My Progress", 22, "bold").pack(side="left")
         pill(top, current_student(), NAVY_SOFT, NAVY).pack(side="left", padx=10)
-        btn(top, "← Home", app.show_home, "ghost", width=110).pack(side="right")
-        btn(top, "Export all results to Excel", self.export, "ghost", width=230).pack(side="right", padx=8)
+        btn(top, "← Home", app.show_home, "ghost", width=90).pack(side="right")
+        btn(top, "Export to Excel", self.export, "ghost", width=140).pack(side="right", padx=8)
 
-        body = ctk.CTkFrame(self, fg_color="transparent")
+        body = self.body_ = ctk.CTkFrame(self, fg_color="transparent")
         body.pack(fill="both", expand=True, pady=(10, 0))
-        body.grid_columnconfigure(0, weight=3)
-        body.grid_columnconfigure(1, weight=2)
-        body.grid_rowconfigure(0, weight=1)
 
-        c1 = card(body)
-        c1.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        c1 = self.c1 = card(body)
         label(c1, "Score trend", 15, "bold").pack(anchor="w", padx=16, pady=(14, 0))
         self.chart = tk.Canvas(c1, height=130, bg=CARD, highlightthickness=0)
         self.chart.pack(fill="x", padx=16, pady=(4, 6))
@@ -1143,8 +1293,7 @@ class HistoryView(ctk.CTkFrame):
         self.tree.bind("<Double-1>", lambda e: self.open())
         self.load()
 
-        c2 = card(body)
-        c2.grid(row=0, column=1, sticky="nsew")
+        c2 = self.c2 = card(body)
         label(c2, "Weak areas", 15, "bold").pack(anchor="w", padx=16, pady=(14, 0))
         label(c2, "Topics you get wrong most often", 12, color=MUTED).pack(anchor="w", padx=16, pady=(0, 8))
         wl = ctk.CTkScrollableFrame(c2, fg_color="transparent")
@@ -1173,6 +1322,31 @@ class HistoryView(ctk.CTkFrame):
                                     progress_color=BAD if rate < 0.5 else SAFFRON if rate < 0.8 else OK)
             pb.set(rate)
             pb.pack(fill="x", pady=(3, 0))
+        self.compact = None
+        self.layout(False)
+        self.bind("<Configure>", lambda e: responsive(self))
+
+    def layout(self, compact):
+        self.compact = compact
+        b = self.body_
+        self.c1.grid_forget()
+        self.c2.grid_forget()
+        if compact:
+            b.grid_columnconfigure(0, weight=1)
+            b.grid_columnconfigure(1, weight=0)
+            b.grid_rowconfigure(0, weight=3)
+            b.grid_rowconfigure(1, weight=2)
+            self.c1.grid(row=0, column=0, sticky="nsew", pady=(0, 8))
+            self.c2.grid(row=1, column=0, sticky="nsew")
+            self.tree["displaycolumns"] = ("when", "test", "score")
+        else:
+            b.grid_columnconfigure(0, weight=3)
+            b.grid_columnconfigure(1, weight=2)
+            b.grid_rowconfigure(0, weight=1)
+            b.grid_rowconfigure(1, weight=0)
+            self.c1.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+            self.c2.grid(row=0, column=1, sticky="nsew")
+            self.tree["displaycolumns"] = "#all"
 
     def draw_chart(self):
         c = self.chart
