@@ -128,3 +128,48 @@ def build_instructions(tasks, title, path):
     parts.append("</div></body></html>")
     Path(path).write_text("\n".join(parts), encoding="utf-8")
     return path
+
+
+def build_typing(rec, path):
+    """Printable typing / dictation report with every mistake marked."""
+    from .typing import KIND_LABEL
+    s = rec["typing"]
+    css = CSS + (".bad{color:#c62828;text-decoration:line-through}.fix{color:#1a7f37}.miss{color:#b26500;"
+                 "text-decoration:underline}.extra{color:#7b3fb5;text-decoration:line-through}.half{color:#0b6e8a;"
+                 "text-decoration:underline}.txt{font-size:17px;line-height:1.9;background:#fff;padding:16px;"
+                 "border:1px solid var(--line);border-radius:10px}")
+    out = [f"<!doctype html><html><head><meta charset='utf-8'><title>{esc(rec['title'])}</title>"
+           f"<meta name='viewport' content='width=device-width,initial-scale=1'><style>{css}</style></head><body>"
+           f"<div class='wrap'><h1>{esc(rec['title'])}</h1><div class='muted'>{esc(rec['when'].replace('T', ' '))}</div>",
+           "<div class='cards'>"]
+    if s.get("net_wpm") is not None:
+        out.append(f"<div class='card'><div class='muted'>Net speed</div><div class='big'>{s['net_wpm']:g} WPM</div>"
+                   f"<div class='muted'>gross {s['gross_wpm']:g} WPM · {fmt_secs(s.get('seconds', 0))}</div></div>")
+    out.append(f"<div class='card'><div class='muted'>Accuracy</div><div class='big'>{s['accuracy']:g}%</div>"
+               f"<div class='muted'>errors {s['error_pct']:g}%</div></div>")
+    out.append(f"<div class='card'><div class='muted'>Mistakes</div><div class='big'>{s['mistakes']:g}</div>"
+               f"<div class='muted'>{s['full_mistakes']} full · {s['half_mistakes']} half</div></div></div>")
+    out.append("<h2>Your typing, checked</h2><div class='txt'>")
+    for k, o, t in rec["items"]:
+        if k == "ok":
+            out.append(esc(t) + " ")
+        elif k == "wrong":
+            out.append(f"<span class='bad'>{esc(t)}</span> <span class='fix'>{esc(o)}</span> ")
+        elif k == "missing":
+            out.append(f"<span class='miss'>[{esc(o)}]</span> ")
+        elif k == "extra":
+            out.append(f"<span class='extra'>{esc(t)}</span> ")
+        else:
+            out.append(f"<span class='half'>{esc(t)}</span> <span class='fix'>{esc(o)}</span> ")
+    out.append("</div><p class='muted'>Struck red = wrong (correct word in green) · [orange] = missing · "
+               "struck purple = extra · underlined teal = half mistake (capitals, punctuation, spacing)</p>")
+    out.append("<h2>List of mistakes</h2><div class='task'><table><tr><th>Mistake</th><th>Should be</th>"
+               "<th>You typed</th></tr>")
+    for k, o, t in rec["items"]:
+        if k != "ok":
+            out.append(f"<tr><td>{esc(KIND_LABEL[k])}{' (½)' if k in ('case', 'punct', 'spacing') else ''}</td>"
+                       f"<td>{esc(o) or '—'}</td><td>{esc(t) or '—'}</td></tr>")
+    out.append("</table></div><h2>Original passage</h2>"
+               f"<div class='txt'>{esc(rec.get('original', ''))}</div></div></body></html>")
+    Path(path).write_text("".join(out), encoding="utf-8")
+    return path

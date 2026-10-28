@@ -58,6 +58,16 @@ def test_variants():
         n = sum(1 for line in t.instructions if not line.startswith("   "))
         assert len(HI.get(t.id, [])) == n, f"Hindi lines for {t.id}: {len(HI.get(t.id, []))} instead of {n}"
     print("variants and Hindi OK")
+    from skilltest.typing import compare, compare_partial
+    o = "The Indian Space Research Organisation was set up in 1969 with the aim of using space technology, for national development."
+    t = "The indian Space Reserch Organisation was setup in 1969 with aim of of using space technology for national development"
+    r = compare(o, t, seconds=60).summary()
+    want = {"case": 1, "wrong": 1, "spacing": 1, "missing": 1, "extra": 1, "punct": 2}
+    assert all(r[k] == v for k, v in want.items()), r
+    assert r["mistakes"] == 5 and compare(o, o).summary()["mistakes"] == 0
+    assert compare(o, t, count_case=False, count_punct=False).summary()["half_mistakes"] == 1      # only spacing left
+    assert compare_partial(o, "The Indian Space Research Organisation was set up in", 30).summary()["mistakes"] == 0
+    print("typing comparison OK")
 
 
 if __name__ == "__main__":

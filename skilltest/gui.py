@@ -25,6 +25,7 @@ from .session import (DEFAULT_STUDENT, current_student, default_root, delete_att
                       next_attempt_number, prepare_folder, remove_student, save_attempt, save_settings, set_student,
                       stats, students, weak_topics)
 from .shortcuts import make_quiz
+from . import typing as TY
 from . import updater
 import threading
 
@@ -278,6 +279,9 @@ class App(ctk.CTk):
         elif kind == "section":
             p = next(p for p in PAPERS if p.id == spec["paper"])
             title, minutes, mode = f"{p.title} - {APP_SHORT[spec['app']]}", SECTION_MIN[spec["app"]], "Section practice"
+        elif kind == "typing":
+            self.switch(TypingTestView, spec)
+            return
         elif kind == "drills":
             chosen = [d for d in DRILLS if d.id in spec["ids"]]
             title = "Drill " + chosen[0].id if len(chosen) == 1 else f"Drills ({len(chosen)})"
@@ -373,6 +377,12 @@ class Home(ctk.CTkScrollableFrame):
         self.quiz_app.pack(side="left")
         btn(c.controls, "Start quiz", self.start_quiz, width=110).pack(side="right")
 
+        c = self.mode_card(grid, 2, 0, "⌨", "#6A3FB5", "Typing Test",
+                           "Speed and accuracy test with full and half mistakes, or compare a dictation:\n"
+                           "paste the paragraph that was read out and what you typed.")
+        btn(c.controls, "Speed test", lambda: app.switch(TypingSetup), "accent", width=130).pack(side="left")
+        btn(c.controls, "Compare two texts", lambda: app.switch(CompareView), width=170).pack(side="left", padx=8)
+
         bar = self.bar = ctk.CTkFrame(self, fg_color="transparent")
         self.bar_a = ctk.CTkFrame(bar, fg_color="transparent")
         self.bar_b = ctk.CTkFrame(bar, fg_color="transparent")
@@ -402,7 +412,9 @@ class Home(ctk.CTkScrollableFrame):
             self.grid_.grid_columnconfigure(i, weight=0 if (compact and i) else 1, uniform="" if compact else "c")
         for i, k in enumerate(self.cards):
             r, c = (i, 0) if compact else divmod(i, 2)
-            k.grid(row=r, column=c, sticky="nsew", padx=(0, 0) if compact else ((0, 8) if c == 0 else (8, 0)), pady=8)
+            span = 2 if (not compact and i == len(self.cards) - 1 and len(self.cards) % 2) else 1
+            k.grid(row=r, column=c, columnspan=span, sticky="nsew",
+                   padx=(0, 0) if (compact or span == 2) else ((0, 8) if c == 0 else (8, 0)), pady=8)
             k.desc.configure(text=k.desc_text.replace("\n", " ") if compact else k.desc_text,
                              wraplength=340 if compact else 0)
         self.bar.pack(fill="x", pady=(8, 0))
@@ -1622,7 +1634,7 @@ class HistoryView(ctk.CTkFrame):
     def draw_chart(self):
         c = self.chart
         c.delete("all")
-        pts = [r["score"] / r["out_of"] * 100 for r in load_history() if r.get("out_of") and r.get("mode") != "Shortcut quiz"][-20:]
+        pts = [r["score"] / r["out_of"] * 100 for r in load_history() if r.get("out_of") and r.get("mode") not in ("Shortcut quiz", "Typing test", "Typing compare")][-20:]
         w, h = max(c.winfo_width(), 200), 130
         left, right, top, bottom = 42, 12, 16, 22
         for v in (0, 50, 100):
@@ -1681,6 +1693,9 @@ class HistoryView(ctk.CTkFrame):
 
     def open(self):
         rec = self.selected()
+        if rec and rec.get("typing"):
+            self.app.switch(TypingResultView, rec)
+            return
         if rec and rec.get("results"):
             self.app.switch(ResultView, rec, Path(rec["folder"]) / "Result_Report.html"
                             if rec.get("folder") and (Path(rec["folder"]) / "Result_Report.html").exists() else None)
@@ -1691,6 +1706,8 @@ class HistoryView(ctk.CTkFrame):
             return
         if rec.get("mode") == "Shortcut quiz":
             self.app.switch(QuizView, make_quiz(20))
+        elif rec.get("mode") == "Typing compare":
+            self.app.switch(CompareView)
         else:
             self.app.start(rec.get("spec") or {})
 
@@ -1705,6 +1722,406 @@ class HistoryView(ctk.CTkFrame):
         if messagebox.askyesno(APP_TITLE, msg, icon="warning"):
             delete_attempt(rec)
             self.app.switch(HistoryView)
+
+
+
+# =================================================================== typing test
+
+TY_COLOURS = {"wrong": BAD, "missing": "#B26500", "extra": "#7B3FB5", "case": "#0B6E8A", "punct": "#0B6E8A",
+              "spacing": "#0B6E8A"}
+
+
+def no_paste(widget):
+    """Typing must be done by hand: block paste and drag-drop into a text box."""
+    t = widget._textbox if hasattr(widget, "_textbox") else widget
+    for ev in ("<<Paste>>", "<Control-v>", "<Control-V>", "<Shift-Insert>", "<Button-2>", "<Button-3>",
+               "<<PasteSelection>>"):
+        t.bind(ev, lambda e: "break")
+
+
+def read_text_file(path):
+    p = Path(path)
+    if p.suffix.lower() == ".docx":
+        from docx import Document
+        return "\n".join(par.text for par in Document(str(p)).paragraphs)
+    for enc in ("utf-8-sig", "utf-16", "cp1252"):
+        try:
+            return p.read_text(encoding=enc)
+        except (UnicodeError, UnicodeDecodeError):
+            continue
+    return p.read_text(errors="ignore")
+
+
+def render_diff(tb, items):
+    """Show what was typed, with each mistake marked and the correct word next to it."""
+    tb.configure(state="normal")
+    tb.delete("1.0", "end")
+    tb.tag_config("bad", foreground=BAD, overstrike=True)
+    tb.tag_config("fix", foreground=OK)
+    tb.tag_config("miss", foreground="#B26500", underline=True)
+    tb.tag_config("extra", foreground="#7B3FB5", overstrike=True)
+    tb.tag_config("half", foreground="#0B6E8A", underline=True)
+    for it in items:
+        if it.kind == "ok":
+            tb.insert("end", it.typed + " ")
+        elif it.kind == "wrong":
+            tb.insert("end", it.typed, "bad")
+            tb.insert("end", f" {it.original} ", "fix")
+        elif it.kind == "missing":
+            tb.insert("end", f"[{it.original}]", "miss")
+            tb.insert("end", " ")
+        elif it.kind == "extra":
+            tb.insert("end", it.typed, "extra")
+            tb.insert("end", " ")
+        else:
+            tb.insert("end", it.typed, "half")
+            tb.insert("end", f" {it.original} ", "fix")
+    tb.configure(state="disabled")
+
+
+class TypingSetup(ctk.CTkFrame):
+    def __init__(self, parent, app: App):
+        super().__init__(parent, fg_color="transparent")
+        self.app = app
+        top = ctk.CTkFrame(self, fg_color="transparent")
+        top.pack(fill="x")
+        label(top, "Typing Test", 22, "bold").pack(side="left")
+        btn(top, "← Home", app.show_home, "ghost", width=90).pack(side="right")
+        btn(top, "Compare two texts", lambda: app.switch(CompareView), "ghost", width=170).pack(side="right", padx=8)
+
+        c = card(self)
+        c.pack(fill="both", expand=True, pady=(12, 0))
+        form = ctk.CTkFrame(c, fg_color="transparent")
+        form.pack(fill="x", padx=20, pady=(18, 6))
+        label(form, "Passage", 13, "bold", MUTED).grid(row=0, column=0, sticky="w")
+        names = [n for n, _ in TY.PASSAGES] + ["My own passage…"]
+        self.passage = option(form, names, 240)
+        self.passage.configure(command=self.preview)
+        self.passage.grid(row=1, column=0, sticky="w", padx=(0, 16))
+        label(form, "Time", 13, "bold", MUTED).grid(row=0, column=1, sticky="w")
+        self.minutes = option(form, ["10 minutes", "5 minutes", "2 minutes", "15 minutes", "No time limit"], 150)
+        self.minutes.grid(row=1, column=1, sticky="w", padx=(0, 16))
+        self.backspace = tk.BooleanVar(value=True)
+        ctk.CTkSwitch(form, text="Allow Backspace", variable=self.backspace, font=F(12),
+                      progress_color=NAVY).grid(row=1, column=2, sticky="w", padx=(0, 16))
+        self.show_passage = tk.BooleanVar(value=True)
+        ctk.CTkSwitch(form, text="Show passage while typing", variable=self.show_passage, font=F(12),
+                      progress_color=NAVY).grid(row=1, column=3, sticky="w")
+        label(c, "Passage text (you can edit 'My own passage'):", 12, color=MUTED).pack(anchor="w", padx=20, pady=(10, 2))
+        self.text = textbox(c, size=14)
+        self.text.pack(fill="both", expand=True, padx=14)
+        bar = ctk.CTkFrame(c, fg_color="transparent")
+        bar.pack(fill="x", padx=20, pady=14)
+        label(bar, "The timer starts with your first key press. Paste is turned off in the typing box.",
+              12, color=MUTED).pack(side="left")
+        btn(bar, "Start typing test", self.start, "accent", width=170).pack(side="right")
+        self.preview(self.passage.get())
+
+    def preview(self, name):
+        self.text.configure(state="normal")
+        self.text.delete("1.0", "end")
+        if name != "My own passage…":
+            self.text.insert("1.0", TY.passage_text(name))
+        else:
+            self.text.focus_set()
+
+    def start(self):
+        text = " ".join(self.text.get("1.0", "end").split())
+        if len(text.split()) < 10:
+            messagebox.showinfo(APP_TITLE, "Please enter a passage of at least 10 words.")
+            return
+        m = self.minutes.get()
+        minutes = 0 if m.startswith("No") else int(m.split()[0])
+        name = self.passage.get()
+        self.app.start({"kind": "typing", "passage": name if name != "My own passage…" else "My own passage",
+                        "text": text, "minutes": minutes, "backspace": self.backspace.get(),
+                        "show": self.show_passage.get()})
+
+
+class TypingTestView(ctk.CTkFrame):
+    def __init__(self, parent, app: App, spec):
+        super().__init__(parent, fg_color="transparent")
+        self.app = app
+        self.spec = spec
+        self.passage = spec.get("text") or TY.passage_text(spec.get("passage", ""))
+        self.limit = int(spec.get("minutes", 10)) * 60
+        self.started = None
+        self.done = False
+
+        top = card(self)
+        top.pack(fill="x")
+        left = ctk.CTkFrame(top, fg_color="transparent")
+        left.pack(side="left", padx=16, pady=10)
+        label(left, f"Typing Test – {spec.get('passage', '')}", 17, "bold").pack(anchor="w")
+        self.info = label(left, "Start typing in the box below. The timer starts with your first key.", 12, color=MUTED)
+        self.info.pack(anchor="w")
+        btn(top, "Finish", self.finish, "accent", width=100, height=44).pack(side="right", padx=(6, 16))
+        self.timer = ctk.CTkLabel(top, text=fmt_secs(self.limit) if self.limit else "0:00",
+                                  font=ctk.CTkFont(family=MONO, size=24, weight="bold"), fg_color=NAVY,
+                                  text_color="white", corner_radius=10, width=110, height=44)
+        self.timer.pack(side="right", padx=6)
+        self.live = pill(top, "0 words", NAVY_SOFT, NAVY)
+        self.live.pack(side="right", padx=6)
+
+        if spec.get("show", True):
+            pc = card(self)
+            pc.pack(fill="both", expand=True, pady=(10, 0))
+            label(pc, "Passage", 12, "bold", MUTED).pack(anchor="w", padx=16, pady=(10, 0))
+            self.ptext = textbox(pc, size=15)
+            self.ptext.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+            self.ptext.insert("1.0", self.passage)
+            self.ptext.configure(state="disabled")
+            TestView.block_copy(self, self.ptext)
+        tc = card(self)
+        tc.pack(fill="both", expand=True, pady=(10, 0))
+        label(tc, "Type here", 12, "bold", MUTED).pack(anchor="w", padx=16, pady=(10, 0))
+        self.box = textbox(tc, size=15)
+        self.box.configure(fg_color="#FBFCFE", border_width=1, border_color="#C9D3E6")
+        self.box.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        no_paste(self.box)
+        t = self.box._textbox
+        t.bind("<Key>", self.on_key, add="+")
+        if not spec.get("backspace", True):
+            for ev in ("<BackSpace>", "<Delete>", "<Control-BackSpace>", "<Control-z>"):
+                t.bind(ev, lambda e: "break")
+        self.after(200, self.box.focus_set)
+        self.tick()
+
+    def on_key(self, e):
+        if self.done:
+            return "break"
+        if self.started is None and e.char and e.char.isprintable():
+            self.started = time.monotonic()
+            self.info.configure(text="Typing… press Finish when you are done.")
+
+    def elapsed(self):
+        return 0 if self.started is None else time.monotonic() - self.started
+
+    def tick(self):
+        if self.done or not self.winfo_exists():
+            return
+        el = self.elapsed()
+        typed = self.box.get("1.0", "end")
+        self.live.configure(text=f"  {len(typed.split())} words  ")
+        if self.limit:
+            left = max(0, self.limit - el)
+            self.timer.configure(text=fmt_secs(left), fg_color=BAD if left <= 60 and self.started else NAVY)
+            if self.started and left <= 0:
+                self.finish(auto=True)
+                return
+        else:
+            self.timer.configure(text=fmt_secs(el))
+        self.after(500, self.tick)
+
+    def finish(self, auto=False):
+        if self.done:
+            return
+        typed = self.box.get("1.0", "end").strip()
+        if not typed:
+            if not auto:
+                messagebox.showinfo(APP_TITLE, "Nothing has been typed yet.")
+            return
+        self.done = True
+        secs = min(self.elapsed(), self.limit) if self.limit else self.elapsed()
+        res = TY.compare_partial(self.passage, typed, seconds=max(secs, 1))
+        rec = typing_record("Typing test", f"Typing – {self.spec.get('passage', '')}", self.passage, typed, res,
+                            {k: v for k, v in self.spec.items()})
+        save_attempt(rec)
+        if auto:
+            messagebox.showinfo(APP_TITLE, "Time is over. Your typing has been checked.")
+        self.app.switch(TypingResultView, rec)
+
+
+def typing_record(mode, title, original, typed, res, spec=None):
+    import datetime as _dt
+    return {"when": _dt.datetime.now().isoformat(timespec="seconds"), "mode": mode, "title": title,
+            "spec": spec or {}, "folder": "", "score": round(res.accuracy, 1), "out_of": 100, "sections": {},
+            "seconds_used": int(res.seconds), "seconds_allowed": 0, "app_seconds": {}, "results": [], "events": [],
+            "typing": res.summary(), "items": [[i.kind, i.original, i.typed] for i in res.items],
+            "original": original, "typed": typed,
+            "rules": {"case": res.count_case, "punct": res.count_punct}}
+
+
+class CompareView(ctk.CTkFrame):
+    """Dictation check: the paragraph that was read out, and what was typed."""
+    def __init__(self, parent, app: App):
+        super().__init__(parent, fg_color="transparent")
+        self.app = app
+        top = ctk.CTkFrame(self, fg_color="transparent")
+        top.pack(fill="x")
+        label(top, "Compare two texts", 22, "bold").pack(side="left")
+        btn(top, "← Home", app.show_home, "ghost", width=90).pack(side="right")
+        label(self, "Paste (or load) the original paragraph that was read out, and the text you typed. "
+                    "The app marks every difference.", 12, color=MUTED, wraplength=900, justify="left").pack(anchor="w", pady=(2, 8))
+
+        bar = ctk.CTkFrame(self, fg_color="transparent")
+        bar.pack(side="bottom", fill="x", pady=(10, 0))
+        self.case = tk.BooleanVar(value=True)
+        self.punct = tk.BooleanVar(value=True)
+        ctk.CTkSwitch(bar, text="Count capital letters", variable=self.case, font=F(12), progress_color=NAVY).pack(side="left")
+        ctk.CTkSwitch(bar, text="Count punctuation", variable=self.punct, font=F(12), progress_color=NAVY).pack(side="left", padx=12)
+        label(bar, "Time taken (min, optional)", 12, color=MUTED).pack(side="left", padx=(10, 4))
+        self.mins = ctk.CTkEntry(bar, width=60, height=32, font=F(13))
+        self.mins.pack(side="left")
+        btn(bar, "Compare", self.run, "accent", width=130).pack(side="right")
+
+        self.body_ = ctk.CTkFrame(self, fg_color="transparent")
+        self.body_.pack(fill="both", expand=True)
+        self.boxes = []
+        self.cards_ = []
+        for title in ("Original paragraph (as read out)", "What I typed"):
+            c = card(self.body_)
+            h = ctk.CTkFrame(c, fg_color="transparent")
+            h.pack(fill="x", padx=14, pady=(10, 4))
+            label(h, title, 13, "bold").pack(side="left")
+            tb = textbox(c, size=13)
+            tb.configure(fg_color="#FBFCFE", border_width=1, border_color="#C9D3E6")
+            btn(h, "Load file…", lambda tb=tb: self.load(tb), "ghost", width=96, height=30).pack(side="right")
+            btn(h, "Clear", lambda tb=tb: tb.delete("1.0", "end"), "ghost", width=64, height=30).pack(side="right", padx=6)
+            tb.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+            self.boxes.append(tb)
+            self.cards_.append(c)
+        self.compact = None
+        self.layout(False)
+        self.bind("<Configure>", lambda e: responsive(self))
+
+    def layout(self, compact):
+        self.compact = compact
+        b = self.body_
+        for c in self.cards_:
+            c.grid_forget()
+        if compact:
+            b.grid_columnconfigure(0, weight=1)
+            b.grid_columnconfigure(1, weight=0)
+            b.grid_rowconfigure(0, weight=1)
+            b.grid_rowconfigure(1, weight=1)
+            self.cards_[0].grid(row=0, column=0, sticky="nsew", pady=(0, 8))
+            self.cards_[1].grid(row=1, column=0, sticky="nsew")
+        else:
+            b.grid_columnconfigure(0, weight=1, uniform="x")
+            b.grid_columnconfigure(1, weight=1, uniform="x")
+            b.grid_rowconfigure(0, weight=1)
+            b.grid_rowconfigure(1, weight=0)
+            self.cards_[0].grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+            self.cards_[1].grid(row=0, column=1, sticky="nsew", padx=(8, 0))
+
+    def load(self, tb):
+        path = filedialog.askopenfilename(title="Open text", filetypes=[("Text or Word", "*.txt *.docx"),
+                                                                         ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            text = read_text_file(path)
+        except Exception as e:
+            messagebox.showerror(APP_TITLE, f"Could not read the file.\n{e}")
+            return
+        tb.delete("1.0", "end")
+        tb.insert("1.0", text)
+
+    def run(self):
+        original = self.boxes[0].get("1.0", "end").strip()
+        typed = self.boxes[1].get("1.0", "end").strip()
+        if not original or not typed:
+            messagebox.showinfo(APP_TITLE, "Please fill in both boxes first.")
+            return
+        try:
+            secs = float(self.mins.get().strip() or 0) * 60
+        except ValueError:
+            secs = 0
+        res = TY.compare(original, typed, seconds=secs, count_case=self.case.get(), count_punct=self.punct.get())
+        rec = typing_record("Typing compare", "Typing – compare two texts", original, typed, res)
+        save_attempt(rec)
+        self.app.switch(TypingResultView, rec)
+
+
+class TypingResultView(ctk.CTkFrame):
+    def __init__(self, parent, app: App, rec):
+        super().__init__(parent, fg_color="transparent")
+        self.app = app
+        self.rec = rec
+        s = rec["typing"]
+        items = [TY.Item(k, o, t) for k, o, t in rec["items"]]
+
+        hero = card(self)
+        hero.pack(fill="x")
+        left = ctk.CTkFrame(hero, fg_color="transparent")
+        left.pack(side="left", padx=22, pady=14)
+        label(left, rec["title"], 14, "bold", MUTED).pack(anchor="w")
+        if s.get("net_wpm") is not None:
+            label(left, f"{s['net_wpm']:g} WPM", 36, "bold", NAVY).pack(anchor="w")
+            label(left, f"net speed  ·  gross {s['gross_wpm']:g} WPM  ·  time {fmt_secs(s.get('seconds', 0))}",
+                  12, color=MUTED).pack(anchor="w")
+        acc = s["accuracy"]
+        vtext, vcol = verdict(acc)
+        label(left, f"Accuracy {acc:g}%   ·   Errors {s['error_pct']:g}%", 18 if s.get('net_wpm') is None else 15,
+              "bold", vcol).pack(anchor="w", pady=(4, 0))
+        label(left, f"{s['original_words']} words in the passage  ·  {s['typed_words']} words typed", 12,
+              color=MUTED).pack(anchor="w")
+        right = ctk.CTkFrame(hero, fg_color="transparent")
+        right.pack(side="right", padx=22, pady=14)
+        label(right, f"Full mistakes: {s['full_mistakes']}     Half mistakes: {s['half_mistakes']}", 13, "bold").pack(anchor="e")
+        grid = ctk.CTkFrame(right, fg_color="transparent")
+        grid.pack(anchor="e", pady=(6, 0))
+        for i, (k, lab) in enumerate(TY.KIND_LABEL.items()):
+            pill(grid, f"{lab}: {s.get(k, 0)}", TY_COLOURS[k], size=11).grid(row=i // 2, column=i % 2, sticky="ew", padx=3, pady=3)
+        label(right, "Full mistake = 1, half mistake = ½. Error % = mistakes ÷ words in the passage.", 11,
+              color=MUTED).pack(anchor="e", pady=(6, 0))
+
+        bar = ctk.CTkFrame(self, fg_color="transparent")
+        bar.pack(side="bottom", fill="x", pady=(10, 0))
+        btn(bar, "← Home", app.show_home, "ghost", width=90).pack(side="left")
+        btn(bar, "Save report", self.save_report, "ghost", width=120).pack(side="left", padx=8)
+        if rec["mode"] == "Typing test":
+            btn(bar, "Try again", lambda: app.start(rec.get("spec") or {}), "accent", width=120).pack(side="right")
+            btn(bar, "New typing test", lambda: app.switch(TypingSetup), width=150).pack(side="right", padx=8)
+        else:
+            btn(bar, "Compare again", lambda: app.switch(CompareView), "accent", width=150).pack(side="right")
+
+        body = ctk.CTkFrame(self, fg_color="transparent")
+        body.pack(fill="both", expand=True, pady=(10, 0))
+        body.grid_columnconfigure(0, weight=3)
+        body.grid_columnconfigure(1, weight=2)
+        body.grid_rowconfigure(0, weight=1)
+        c1 = card(body)
+        c1.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        h = ctk.CTkFrame(c1, fg_color="transparent")
+        h.pack(fill="x", padx=14, pady=(10, 2))
+        label(h, "Your typing, checked", 14, "bold").pack(side="left")
+        label(c1, "Struck red = wrong (correct word in green)  ·  [orange] = missing  ·  struck purple = extra  ·  "
+                  "underlined teal = half mistake", 11, color=MUTED, wraplength=520, justify="left").pack(anchor="w", padx=14)
+        self.diff = textbox(c1, size=14)
+        self.diff.pack(fill="both", expand=True, padx=8, pady=8)
+        render_diff(self.diff, items)
+
+        c2 = card(body)
+        c2.grid(row=0, column=1, sticky="nsew")
+        label(c2, "List of mistakes", 14, "bold").pack(anchor="w", padx=14, pady=(10, 4))
+        fr = ctk.CTkFrame(c2, fg_color=CARD)
+        fr.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        tree = ttk.Treeview(fr, columns=("kind", "orig", "typed"), show="headings", style="Nice.Treeview")
+        for col, text, w in (("kind", "Mistake", 190), ("orig", "Should be", 120), ("typed", "You typed", 120)):
+            tree.heading(col, text=text, anchor="w")
+            tree.column(col, width=w, minwidth=90, anchor="w", stretch=True)
+        sb = ctk.CTkScrollbar(fr, command=tree.yview, button_color="#C9D3E6")
+        tree.configure(yscrollcommand=sb.set)
+        tree.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+        for it in items:
+            if it.kind != "ok":
+                tree.insert("", "end", values=(TY.KIND_LABEL[it.kind] + (" (½)" if it.weight == 0.5 else ""),
+                                               it.original or "—", it.typed or "—"))
+
+    def save_report(self):
+        rec = self.rec
+        path = filedialog.asksaveasfilename(title="Save typing report", defaultextension=".html",
+                                            initialdir=str(default_root()),
+                                            initialfile=f"Typing_report_{rec['when'][:10]}.html",
+                                            filetypes=[("Web page", "*.html")])
+        if not path:
+            return
+        from .report import build_typing
+        build_typing(rec, path)
+        webbrowser.open(Path(path).as_uri())
 
 
 def practice_drills(app, topic):

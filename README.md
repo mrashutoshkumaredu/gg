@@ -29,6 +29,12 @@ You can also press **Check for updates** at the bottom of the Home screen.
 - **45 topic drills**: short tasks on one syllabus topic each (Mail Merge, Track Changes, VLOOKUP, Subtotal,
   Data Validation, Slide Master, gradient fills and so on). You can check them instantly and see the model answer.
 - **Shortcut key quiz**: 20 random questions from about 80 Word, Excel and PowerPoint shortcuts.
+- **Typing test**: 8 office-style passages (or your own), 2/5/10/15-minute or untimed, Backspace on/off.
+  Gives gross and net speed (WPM), accuracy, error %, and full and half mistakes, with every mistake marked.
+  Paste is blocked in the typing box.
+- **Compare two texts** (dictation check): paste or load (.txt/.docx) the paragraph that was read out and
+  what you typed. Every wrong, missing or extra word, capital letter, punctuation and spacing slip is marked.
+  Capitals and punctuation can be switched off. Results can be saved as a printable report.
 - **My Progress**: past scores and your weak topics.
 
 ## How a test works

@@ -183,7 +183,7 @@ def delete_attempt(record: dict, delete_files=True):
 
 
 def stats(history):
-    tests = [r for r in history if r.get("mode") != "Shortcut quiz"]
+    tests = [r for r in history if r.get("mode") not in ("Shortcut quiz", "Typing test", "Typing compare")]
     if not tests:
         return None
     pct = [r["score"] / r["out_of"] * 100 for r in tests if r.get("out_of")]
