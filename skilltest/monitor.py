@@ -179,7 +179,9 @@ class Monitor:
                 self.first_seen[app] = int(time.monotonic() - self._t0)
         if app != self._fg and exe:
             if app:
-                self.log(app, f"Switched to {APP_NAME[app]}" + (f" – {title}" if title else ""))
+                # name the file only when it belongs to the test, so other open files stay private
+                show = title if title and any(n.split(".")[0].lower() in title.lower() for n in self._files) else ""
+                self.log(app, f"Switched to {APP_NAME[app]}" + (f" – {show}" if show else ""))
             self._fg = app
 
     def _scan_files(self):
@@ -224,8 +226,13 @@ class Monitor:
         except Exception:
             return None
 
+    def _ours(self, name):
+        """A document in the test folder, or a new unsaved one (Document1, Book1, Presentation1)."""
+        return not os.path.dirname(name) or str(self.folder).lower() in name.lower()
+
     def _track_docs(self, app, items):
         """items: {fullname: (saved, extra_dict)}"""
+        items = {k: v for k, v in items.items() if self._ours(k)}
         prev = {k: v for k, v in self._docs.items() if k[0] == app}
         for name, (saved, extra) in items.items():
             key = (app, name)

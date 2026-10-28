@@ -48,7 +48,9 @@ plus the build number.
 - **Compare two texts** (dictation check): paste or load (.txt/.docx) the paragraph that was read out and
   what you typed. Every wrong, missing or extra word, capital letter, punctuation and spacing slip is marked.
   Capitals and punctuation can be switched off. Results can be saved as a printable report.
-- **My Progress**: past scores and your weak topics.
+- **My Progress**: past scores and your weak topics. **Find old results** looks through the test folders and puts
+  back any result missing from the list (older retakes are re-marked, so their score is approximate).
+  A test closed without submitting is shown as "not completed" and left out of the averages.
 
 ## How a test works
 
@@ -65,9 +67,11 @@ plus the build number.
 5. After you submit, the app checks your files and shows the result. A printable report
    (`Result_Report.html`) with the full activity timeline is saved in the test folder.
 
-## Split screen
+## Any screen size
 
-The window can be made as small as half the screen, and every screen rearranges itself when it is narrow.
+The top bar (Home, My progress, Typing, Updates, Help) is always visible. Every screen can be scrolled with the
+mouse wheel or touchpad when the window is too small to show everything, so all options can be reached on any
+laptop. The window can be made as small as half the screen, and every screen rearranges itself when it is narrow.
 During a test, press **Split screen**: open Office windows move to the left and the app moves to the right, on top.
 Windows key + Left/Right arrow (Windows Snap) also works.
 
@@ -107,9 +111,12 @@ numbers**, so answers cannot simply be remembered. Use **Retake (new numbers)** 
 
 ## Your saved results
 
-Results and settings are kept in `%APPDATA%\ISRO_SkillTest`. Every save is written to a temporary file first and
-the previous good copy is kept as a `.bak`, so a power cut cannot wipe them. If a file is ever damaged, the app
-restores it from the backup, keeps the damaged copy aside, and tells you.
+Results and settings are kept in `%APPDATA%\ISRO_SkillTest` on each computer. Every save is written to a
+temporary file first and the previous good copy is kept as a `.bak`, so a power cut cannot wipe them. If a file is
+ever damaged, the app restores it from the backup, keeps the damaged copy aside, and tells you. If the file is only
+in use by another program for a moment, nothing is changed. Each test folder also keeps its own `result.json`.
+
+Live activity only lists files in the test folder (and new unsaved documents), not other files you have open.
 
 ## Run from source (optional)
 

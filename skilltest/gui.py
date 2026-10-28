@@ -93,13 +93,85 @@ def textbox(parent, height=200, mono=False, size=14):
 
 
 def responsive(view, limit=900):
-    """Call view.layout(compact) when the window crosses the 'narrow' width (e.g. split screen)."""
-    width = view.winfo_width() / max(ctk.ScalingTracker.get_window_scaling(view), 0.1)
-    if width < 50:
-        return
-    compact = width < limit
-    if compact != view.compact:
-        view.layout(compact)
+    """Call view.layout(compact) when the window crosses the 'narrow' width (e.g. split screen).
+    Waits until resizing pauses, so dragging the window edge stays smooth."""
+    job = getattr(view, "_resp_job", None)
+    if job:
+        try:
+            view.after_cancel(job)
+        except Exception:
+            pass
+
+    def run():
+        view._resp_job = None
+        if not view.winfo_exists():
+            return
+        width = view.winfo_width() / max(ctk.ScalingTracker.get_window_scaling(view), 0.1)
+        if width < 50:
+            return
+        compact = width < limit
+        if compact != view.compact:
+            view.layout(compact)
+    view._resp_job = view.after(120, run)
+
+
+class ScrollHost(tk.Frame):
+    """Holds every screen. When the window is smaller than the screen needs, it scrolls (mouse wheel, touchpad
+    or the scroll bar); when it is bigger, the screen simply fills it."""
+    def __init__(self, master):
+        super().__init__(master, bg=BG, highlightthickness=0, bd=0)
+        self.canvas = tk.Canvas(self, bg=BG, highlightthickness=0, bd=0, yscrollincrement=20)
+        self.bar = ctk.CTkScrollbar(self, command=self.canvas.yview, width=16, button_color="#AEB9CE",
+                                    button_hover_color="#8F9BB3", fg_color=BG)
+        self.canvas.configure(yscrollcommand=self.bar.set)
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.inner = tk.Frame(self.canvas, bg=BG, highlightthickness=0, bd=0)
+        self.win = self.canvas.create_window(0, 0, window=self.inner, anchor="nw")
+        self.canvas.bind("<Configure>", lambda e: self.fit())
+        self.inner.bind("<Configure>", lambda e: self.after_idle(self.fit))
+        self._bar_on = False
+
+    def fit(self):
+        cw, ch = self.canvas.winfo_width(), self.canvas.winfo_height()
+        need = self.inner.winfo_reqheight()
+        h = max(ch, need)
+        self.canvas.itemconfigure(self.win, width=cw, height=h)
+        self.canvas.configure(scrollregion=(0, 0, cw, h))
+        show = need > ch + 2
+        if show != self._bar_on:
+            self._bar_on = show
+            if show:
+                self.bar.pack(side="right", fill="y", before=self.canvas)
+            else:
+                self.bar.pack_forget()
+                self.canvas.yview_moveto(0)
+
+    def to_top(self):
+        self.after_idle(lambda: (self.fit(), self.canvas.yview_moveto(0)))
+
+    def on_wheel(self, e):
+        """Scroll the screen, unless the pointer is over something that scrolls by itself (text, lists)."""
+        w = self.winfo_containing(e.x_root, e.y_root)
+        inside = False
+        while w is not None:
+            if isinstance(w, (tk.Text, ttk.Treeview, tk.Listbox, ctk.CTkScrollableFrame)):
+                return
+            if w is self:
+                inside = True
+                break
+            w = w.master
+        if not inside or not self._bar_on:
+            return
+        if getattr(e, "num", None) == 4:
+            units = -3
+        elif getattr(e, "num", None) == 5:
+            units = 3
+        elif sys.platform == "darwin":
+            units = -int(e.delta) or (-1 if e.delta > 0 else 1)
+        else:
+            # a mouse notch is 120 (= 3 steps); touchpads send many small values, so they scroll gently
+            units = -int(e.delta / 40) or (-1 if e.delta > 0 else 1)
+        self.canvas.yview_scroll(units, "units")
 
 
 def open_path(p):
@@ -142,22 +214,39 @@ class App(ctk.CTk):
         self.minsize(420, 480)                      # small enough for half-screen / Windows Snap
         style_tree()
 
-        head = ctk.CTkFrame(self, fg_color=NAVY, corner_radius=0, height=64)
+        head = ctk.CTkFrame(self, fg_color=NAVY, corner_radius=0, height=60)
         head.pack(fill="x")
         head.pack_propagate(False)
-        logo = ctk.CTkLabel(head, text="◉", font=F(26, "bold"), text_color=SAFFRON)
-        logo.pack(side="left", padx=(20, 8))
-        box = ctk.CTkFrame(head, fg_color="transparent")
-        box.pack(side="left")
-        label(box, APP_TITLE, 18, "bold", "white").pack(anchor="w")
-        label(box, "Skill Test for Assistant / UDC / JPA / Stenographer", 11, color="#C9D6EE").pack(anchor="w")
-        self.head_right = label(head, "Word 35  ·  Excel 35  ·  PowerPoint 30  ·  75 min", 12, color="#C9D6EE")
-        self.head_right.pack(side="right", padx=20)
+        logo = ctk.CTkLabel(head, text="◉", font=F(24, "bold"), text_color=SAFFRON)
+        logo.pack(side="left", padx=(16, 6))
+        self.head_box = ctk.CTkFrame(head, fg_color="transparent")
+        self.head_box.pack(side="left")
+        label(self.head_box, APP_TITLE, 17, "bold", "white").pack(anchor="w")
+        self.head_sub = label(self.head_box, "Skill Test for Assistant / UDC / JPA / Stenographer", 11, color="#C9D6EE")
+        self.head_sub.pack(anchor="w")
+        # navigation that never scrolls away
+        nav = ctk.CTkFrame(head, fg_color="transparent")
+        nav.pack(side="right", padx=10)
+        style = dict(height=32, corner_radius=8, font=F(12, "bold"), fg_color=NAVY_DARK, hover_color="#06214F",
+                     text_color="white")
+        self.nav = {}
+        for key, text, cmd, w in (("help", "Help", lambda: messagebox.showinfo(APP_TITLE, HELP_TEXT), 56),
+                                  ("updates", "Updates", lambda: self.check_updates(), 84),
+                                  ("typing", "Typing", lambda: self.go(TypingSetup), 70),
+                                  ("progress", "My progress", lambda: self.go(HistoryView), 104),
+                                  ("home", "Home", lambda: self.go(None), 64)):
+            b = ctk.CTkButton(nav, text=text, command=cmd, width=w, **style)
+            b.pack(side="right", padx=3)
+            self.nav[key] = b
         self.bind("<Configure>", self._head_fit, add="+")
         ctk.CTkFrame(self, fg_color=SAFFRON, corner_radius=0, height=4).pack(fill="x")
 
-        self.body = ctk.CTkFrame(self, fg_color=BG, corner_radius=0)
-        self.body.pack(fill="both", expand=True)
+        self.host = ScrollHost(self)
+        self.host.pack(fill="both", expand=True)
+        self.body = self.host.inner
+        self.bind_all("<MouseWheel>", self.host.on_wheel, add="+")
+        self.bind_all("<Button-4>", self.host.on_wheel, add="+")
+        self.bind_all("<Button-5>", self.host.on_wheel, add="+")
         self.frame = None
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.update_info = None
@@ -199,8 +288,11 @@ class App(ctk.CTk):
             return
         if updater.update_available(info):
             self.update_info = info
+            self.mark_update(True)
             if isinstance(self.frame, Home):
                 self.frame.show_update(info)
+            elif not quiet:
+                self.go(None)
         elif not quiet:
             messagebox.showinfo(APP_TITLE, f"You have the latest version ({updater.version_string()}).")
 
@@ -263,11 +355,19 @@ class App(ctk.CTk):
     def _head_fit(self, e=None):
         if e is not None and e.widget is not self:
             return
-        narrow = self.winfo_width() / max(ctk.ScalingTracker.get_window_scaling(self), 0.1) < 900
-        if narrow and self.head_right.winfo_manager():
-            self.head_right.pack_forget()
-        elif not narrow and not self.head_right.winfo_manager():
-            self.head_right.pack(side="right", padx=20)
+        width = self.winfo_width() / max(ctk.ScalingTracker.get_window_scaling(self), 0.1)
+        if width < 980 and self.head_sub.winfo_manager():
+            self.head_sub.pack_forget()
+        elif width >= 980 and not self.head_sub.winfo_manager():
+            self.head_sub.pack(anchor="w")
+        if width < 760 and self.head_box.winfo_manager():
+            self.head_box.pack_forget()
+        elif width >= 760 and not self.head_box.winfo_manager():
+            self.head_box.pack(side="left", after=self.head_box.master.winfo_children()[0])
+
+    def mark_update(self, on):
+        self.nav["updates"].configure(text="Update ●" if on else "Updates", fg_color=SAFFRON if on else NAVY_DARK,
+                                      text_color="#1D1300" if on else "white")
 
     def on_close(self):
         f = self.frame
@@ -275,13 +375,31 @@ class App(ctk.CTk):
             if not messagebox.askyesno(APP_TITLE, "A test is running.\n\nSubmit it now and close the app?"):
                 return
             f.finish(quiet=True)
+        elif isinstance(f, TypingTestView) and not f.done and f.started is not None:
+            if not messagebox.askyesno(APP_TITLE, "A typing test is running.\n\nClose without saving it?"):
+                return
         self.destroy()
 
     def switch(self, cls, *args, **kw):
         if self.frame is not None:
             self.frame.destroy()
         self.frame = cls(self.body, self, *args, **kw)
-        self.frame.pack(fill="both", expand=True, padx=20, pady=16)
+        self.frame.pack(fill="both", expand=True, padx=16, pady=12)
+        self.host.to_top()
+
+    def test_running(self):
+        f = self.frame
+        return isinstance(f, (TestView, TypingTestView)) and not f.done
+
+    def go(self, cls):
+        """Top-bar navigation; never leaves a running test by accident."""
+        if self.test_running():
+            messagebox.showinfo(APP_TITLE, "A test is running. Submit or finish it first.")
+            return
+        if cls is None:
+            self.show_home()
+        else:
+            self.switch(cls)
 
     def show_home(self):
         self.attributes("-topmost", False)
@@ -332,7 +450,7 @@ class App(ctk.CTk):
 
 # =================================================================== home
 
-class Home(ctk.CTkScrollableFrame):
+class Home(ctk.CTkFrame):
     def __init__(self, parent, app: App):
         super().__init__(parent, fg_color="transparent")
         self.app = app
@@ -345,7 +463,7 @@ class Home(ctk.CTkScrollableFrame):
 
         # student chooser
         who = ctk.CTkFrame(self, fg_color="transparent")
-        who.pack(fill="x", pady=(0, 10))
+        who.pack(fill="x", pady=(0, 8))
         label(who, "Student", 13, "bold", MUTED).pack(side="left")
         self.student = option(who, students() + ["+ Add student…"], 220)
         self.student.set(current_student())
@@ -366,8 +484,8 @@ class Home(ctk.CTkScrollableFrame):
             c = card(strip)
             c.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 8, 0))
             strip.grid_columnconfigure(i, weight=1)
-            label(c, k, 12, color=MUTED).pack(anchor="w", padx=16, pady=(12, 0))
-            label(c, v, 20 if st else 15, "bold", NAVY).pack(anchor="w", padx=16, pady=(0, 12))
+            label(c, k, 12, color=MUTED).pack(anchor="w", padx=16, pady=(8, 0))
+            label(c, v, 18 if st else 14, "bold", NAVY).pack(anchor="w", padx=16, pady=(0, 8))
 
         grid = self.grid_ = ctk.CTkFrame(self, fg_color="transparent")
         self.cards = []
@@ -405,13 +523,10 @@ class Home(ctk.CTkScrollableFrame):
         bar = self.bar = ctk.CTkFrame(self, fg_color="transparent")
         self.bar_a = ctk.CTkFrame(bar, fg_color="transparent")
         self.bar_b = ctk.CTkFrame(bar, fg_color="transparent")
-        btn(self.bar_a, "My progress & retakes", lambda: app.switch(HistoryView), "ghost", width=190).pack(side="left")
-        btn(self.bar_a, "How it works", self.help, "ghost", width=120).pack(side="left", padx=8)
         self.strict = tk.BooleanVar(value=bool(load_settings().get("strict")))
         ctk.CTkSwitch(self.bar_a, text="Strict exam mode", variable=self.strict, font=F(12), progress_color=NAVY,
                       command=self.toggle_strict).pack(side="left", padx=6)
         btn(self.bar_b, "Change", self.change_root, "ghost", width=80).pack(side="right")
-        btn(self.bar_b, "Check for updates", lambda: app.check_updates(), "ghost", width=150).pack(side="left")
         self.root_lbl = label(self.bar_b, f"Test folders: {default_root()}", 12, color=MUTED)
         self.root_lbl.pack(side="right", padx=8)
 
@@ -425,7 +540,7 @@ class Home(ctk.CTkScrollableFrame):
             w.pack_forget()
         if not compact:
             self.who_note.pack(side="left", padx=12)
-            self.strip.pack(fill="x", pady=(0, 14))
+            self.strip.pack(fill="x", pady=(0, 8))
         self.grid_.pack(fill="both", expand=True)
         for i in (0, 1):
             self.grid_.grid_columnconfigure(i, weight=0 if (compact and i) else 1, uniform="" if compact else "c")
@@ -433,9 +548,12 @@ class Home(ctk.CTkScrollableFrame):
             r, c = (i, 0) if compact else divmod(i, 2)
             span = 2 if (not compact and i == len(self.cards) - 1 and len(self.cards) % 2) else 1
             k.grid(row=r, column=c, columnspan=span, sticky="nsew",
-                   padx=(0, 0) if (compact or span == 2) else ((0, 8) if c == 0 else (8, 0)), pady=8)
-            k.desc.configure(text=k.desc_text.replace("\n", " ") if compact else k.desc_text,
-                             wraplength=340 if compact else 0)
+                   padx=(0, 0) if (compact or span == 2) else ((0, 8) if c == 0 else (8, 0)), pady=6)
+            # narrow window: a short list (title, choices, button) without the description
+            if compact:
+                k.desc.pack_forget()
+            elif not k.desc.winfo_manager():
+                k.desc.pack(anchor="w", padx=20, after=k.top)
         self.bar.pack(fill="x", pady=(8, 0))
         if compact:
             self.bar_a.pack(side="top", anchor="w")
@@ -468,16 +586,16 @@ class Home(ctk.CTkScrollableFrame):
     def mode_card(self, grid, r, c, icon, colour, title, desc):
         k = card(grid)
         self.cards.append(k)
-        top = ctk.CTkFrame(k, fg_color="transparent")
-        top.pack(fill="x", padx=20, pady=(18, 6))
-        ctk.CTkLabel(top, text=icon, width=44, height=44, corner_radius=22, fg_color=colour, text_color="white",
-                     font=F(20, "bold")).pack(side="left")
-        label(top, title, 18, "bold").pack(side="left", padx=12)
+        top = k.top = ctk.CTkFrame(k, fg_color="transparent")
+        top.pack(fill="x", padx=20, pady=(14, 2))
+        ctk.CTkLabel(top, text=icon, width=38, height=38, corner_radius=19, fg_color=colour, text_color="white",
+                     font=F(17, "bold")).pack(side="left")
+        label(top, title, 17, "bold").pack(side="left", padx=12)
         k.desc_text = desc
         k.desc = label(k, desc, 13, color=MUTED, justify="left")
         k.desc.pack(anchor="w", padx=20)
         k.controls = ctk.CTkFrame(k, fg_color="transparent")
-        k.controls.pack(side="bottom", fill="x", padx=20, pady=(26, 18))
+        k.controls.pack(side="bottom", fill="x", padx=20, pady=(10, 14))
         return k
 
     def pick_student(self, value):
@@ -771,10 +889,7 @@ class TestView(ctk.CTkFrame):
 
     # ---------- adapt to the window size (works in split screen / half screen)
     def on_resize(self, _=None):
-        width = self.winfo_width() / max(ctk.ScalingTracker.get_window_scaling(self.app), 0.1)
-        compact = width < 900
-        if compact != self.compact:
-            self.layout(compact)
+        responsive(self)
 
     def layout(self, compact):
         self.compact = compact
@@ -987,10 +1102,19 @@ class TestView(ctk.CTkFrame):
         results = grade_tasks(self.tasks, self.folder)
         rec = make_record(self.mode, self.title_, self.folder, results, used, self.allowed,
                           self.monitor.app_seconds, self.monitor.events, spec=self.spec, attempt=self.attempt)
+        if quiet:
+            rec["completed"] = False             # the window was closed during the test
         try:
-            save_attempt(rec)
+            session_mod.write_json(self.folder / "result.json", rec)     # copy kept with the files
         except Exception:
             pass
+        try:
+            save_attempt(rec)
+        except Exception as e:
+            if not quiet:
+                messagebox.showwarning(APP_TITLE, "The result could not be added to My Progress "
+                                                  f"({type(e).__name__}: {e}).\n\nIt is still saved in the test folder, "
+                                                  "and 'Find old results' in My Progress can bring it back.")
         report = self.folder / "Result_Report.html"
         try:
             build_report(rec, report)
@@ -1404,7 +1528,7 @@ class ResultView(ctk.CTkFrame):
 
 class QuizView(ctk.CTkFrame):
     def __init__(self, parent, app: App, questions, quiz_app=None):
-        super().__init__(parent, fg_color="transparent")
+        super().__init__(parent, fg_color="transparent", height=600)      # scrolls when the window is shorter
         self.app = app
         self.qs = questions
         self.quiz_app = quiz_app
@@ -1562,8 +1686,10 @@ class HistoryView(ctk.CTkFrame):
         top.pack(fill="x")
         label(top, "My Progress", 22, "bold").pack(side="left")
         pill(top, current_student(), NAVY_SOFT, NAVY).pack(side="left", padx=10)
-        btn(top, "← Home", app.show_home, "ghost", width=90).pack(side="right")
-        btn(top, "Export to Excel", self.export, "ghost", width=140).pack(side="right", padx=8)
+        acts = ctk.CTkFrame(self, fg_color="transparent")          # own row, so it fits in a narrow window
+        acts.pack(fill="x", pady=(8, 0))
+        btn(acts, "Find old results", self.find_old, "accent", width=150).pack(side="left")
+        btn(acts, "Export to Excel", self.export, "ghost", width=140).pack(side="left", padx=8)
 
         body = self.body_ = ctk.CTkFrame(self, fg_color="transparent")
         body.pack(fill="both", expand=True, pady=(10, 0))
@@ -1653,7 +1779,8 @@ class HistoryView(ctk.CTkFrame):
     def draw_chart(self):
         c = self.chart
         c.delete("all")
-        pts = [r["score"] / r["out_of"] * 100 for r in load_history() if r.get("out_of") and r.get("mode") not in ("Shortcut quiz", "Typing test", "Typing compare")][-20:]
+        pts = [r["score"] / r["out_of"] * 100 for r in load_history() if r.get("out_of") and r.get("mode") not in ("Shortcut quiz", "Typing test", "Typing compare")
+               and r.get("completed") is not False][-20:]
         w, h = max(c.winfo_width(), 200), 130
         left, right, top, bottom = 42, 12, 16, 22
         for v in (0, 50, 100):
@@ -1675,6 +1802,33 @@ class HistoryView(ctk.CTkFrame):
                 c.create_text(x, y - 13, text=f"{p:.0f}", fill=INK, font=(FAMILY, 9, "bold"))
         c.create_text(left, h - 6, text="older", anchor="w", fill=MUTED, font=(FAMILY, 9))
         c.create_text(w - right, h - 6, text="latest", anchor="e", fill=MUTED, font=(FAMILY, 9))
+
+    def find_old(self):
+        from .recover import find_old_results
+        wait = card(self, fg_color=NAVY)
+        label(wait, "Looking through your test folders…", 16, "bold", "white").pack(padx=30, pady=20)
+        wait.place(relx=0.5, rely=0.4, anchor="center")
+        self.update()
+        try:
+            added, skipped = find_old_results()
+        except Exception as e:
+            wait.destroy()
+            messagebox.showerror(APP_TITLE, f"Could not finish the search.\n{type(e).__name__}: {e}")
+            return
+        wait.destroy()
+        if not added:
+            messagebox.showinfo(APP_TITLE, "No missing results were found. Everything in your test folders is "
+                                           "already in My Progress." + (f"\n\n({skipped} folder(s) could not be read.)" if skipped else ""))
+            return
+        rem = sum(1 for r in added if r.get("remarked"))
+        msg = f"{len(added)} missing result(s) were found and added to My Progress."
+        if rem:
+            msg += (f"\n\n{rem} of them were retakes from an older version. Their files were marked again with the "
+                    "first-attempt numbers, so those scores are only approximate (shown as 're-marked').")
+        if skipped:
+            msg += f"\n\n{skipped} folder(s) could not be read."
+        messagebox.showinfo(APP_TITLE, msg)
+        self.app.switch(HistoryView)
 
     def export(self):
         path = filedialog.asksaveasfilename(title="Save results as", defaultextension=".xlsx",
@@ -1698,6 +1852,12 @@ class HistoryView(ctk.CTkFrame):
             w = rec["when"]
             when = f"{w[8:10]}-{w[5:7]}-{w[0:4]} {w[11:16]}"
             name = rec["title"] + (" (recheck)" if rec.get("mode") == "Fix & recheck" else "")
+            if rec.get("completed") is False:
+                name += " (not completed)"
+            elif rec.get("remarked"):
+                name += " (re-marked)"
+            elif rec.get("recovered"):
+                name += " (recovered)"
             iid = self.tree.insert("", "end", values=(when, name,
                                                       rec.get("attempt", "–"), f"{rec['score']:g}/{rec['out_of']:g}",
                                                       fmt("word"), fmt("excel"), fmt("ppt")))

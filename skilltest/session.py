@@ -41,14 +41,37 @@ def write_json(path: Path, data, indent=1):
     os.replace(tmp, path)
 
 
+class DataBusy(OSError):
+    """The file exists but could not be opened (for example locked by an antivirus scan)."""
+
+
+def _read_text(path: Path):
+    """Read a file, retrying for about 2 seconds if Windows or an antivirus has it locked."""
+    last = None
+    for _ in range(10):
+        try:
+            return path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            raise
+        except OSError as e:
+            last = e
+            time.sleep(0.2)
+    raise DataBusy(f"{path.name} is in use by another program ({last})")
+
+
 def read_json(path: Path, default, what="data"):
+    """Read saved data. A locked file raises DataBusy (it is never mistaken for a damaged one);
+    only a file whose content is broken is set aside and replaced from the backup."""
     path = Path(path)
     bak = path.with_name(path.name + ".bak")
     if not path.exists() and not bak.exists():
         return default
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+        return json.loads(_read_text(path))
+    except (DataBusy, FileNotFoundError) as e:
+        if isinstance(e, DataBusy):
+            raise
+    except (ValueError, UnicodeDecodeError):
         pass
     # the main file is damaged: keep it aside (never overwrite it) and fall back to the backup
     if path.exists():
@@ -74,7 +97,10 @@ def settings_path():
 
 
 def load_settings():
-    s = read_json(settings_path(), {}, "settings")
+    try:
+        s = read_json(settings_path(), {}, "settings")
+    except DataBusy:
+        return {}
     return s if isinstance(s, dict) else {}
 
 
@@ -174,8 +200,16 @@ def history_path():
     return data_dir() / "history.json"
 
 
-def load_all_history():
-    h = read_json(history_path(), [], "results history")
+def load_all_history(strict=False):
+    """strict=True is used before saving: if the file cannot be read, saving stops instead of overwriting it."""
+    try:
+        h = read_json(history_path(), [], "results history")
+    except DataBusy:
+        if strict:
+            raise
+        DATA_WARNINGS.append("The results file is in use by another program, so My Progress could not be shown "
+                             "fully this time. Nothing has been changed; try again in a moment.")
+        return []
     return h if isinstance(h, list) else []
 
 
@@ -187,7 +221,7 @@ def load_history(student=None):
 
 def save_attempt(record: dict):
     record.setdefault("student", current_student())
-    h = load_all_history()
+    h = load_all_history(strict=True)
     h.append(record)
     write_json(history_path(), h)
 
@@ -219,7 +253,8 @@ def make_record(mode, title, folder, results, seconds_used, seconds_allowed, app
 def delete_attempt(record: dict, delete_files=True):
     """Remove one attempt from history (matched by time and title) and, if asked, its folder."""
     import shutil
-    h = [r for r in load_all_history() if not (r.get("when") == record.get("when") and r.get("title") == record.get("title"))]
+    h = [r for r in load_all_history(strict=True)
+         if not (r.get("when") == record.get("when") and r.get("title") == record.get("title"))]
     write_json(history_path(), h)
     folder = record.get("folder")
     if delete_files and folder and Path(folder).exists() and default_root() in Path(folder).parents:
@@ -230,7 +265,8 @@ def delete_attempt(record: dict, delete_files=True):
 
 
 def stats(history):
-    tests = [r for r in history if r.get("mode") not in ("Shortcut quiz", "Typing test", "Typing compare")]
+    tests = [r for r in history if r.get("mode") not in ("Shortcut quiz", "Typing test", "Typing compare")
+             and r.get("completed") is not False]
     if not tests:
         return None
     pct = [r["score"] / r["out_of"] * 100 for r in tests if r.get("out_of")]

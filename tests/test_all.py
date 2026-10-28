@@ -87,6 +87,19 @@ def test_variants():
     # versions: old installs (v1.0.x) must see the new releases as newer
     from skilltest import updater as U
     assert U.parse("v1.7.12") > U.parse("v1.0.9") and U.parse("v1.7.12") > (1, 7, 11)
+    # a locked file is never treated as damaged, and saving stops instead of overwriting it
+    real = S._read_text
+    S._read_text = lambda p: (_ for _ in ()).throw(S.DataBusy("locked"))
+    try:
+        try:
+            S.read_json(f, [])
+            raise AssertionError("a locked file must raise DataBusy")
+        except S.DataBusy:
+            pass
+        assert not [x for x in glob.glob(str(f) + ".damaged-*") if x.endswith(".damaged-new")]
+    finally:
+        S._read_text = real
+    assert S.read_json(f, []) == [1, 9]
     print("safe saving, untimed typing and versions OK")
 
 
