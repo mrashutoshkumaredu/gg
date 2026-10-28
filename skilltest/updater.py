@@ -1,17 +1,29 @@
-"""Check GitHub for a newer release and replace the running .exe with it."""
+"""Check GitHub for a newer release and replace the running .exe with it.
+
+Reaching GitHub is tried three ways, because many PCs block one of them:
+1. Python's normal connection, using Windows' list of trusted certificates
+2. the same, with the certificate list that is bundled inside the app (certifi)
+3. Windows PowerShell, which uses Windows' own downloader, proxy settings and certificate updates
+"""
 from __future__ import annotations
 
 import json
 import os
+import socket
+import ssl
 import subprocess
 import sys
 import tempfile
+import urllib.error
 import urllib.request
 from pathlib import Path
+
+from . import __version__
 
 REPO = "mrashutoshkumaredu/gg"
 API = f"https://api.github.com/repos/{REPO}/releases/latest"
 PAGE = f"https://github.com/{REPO}/releases/latest"
+HEADERS = {"Accept": "application/vnd.github+json", "User-Agent": "ISRO-SkillTest"}
 
 try:
     from ._build import BUILD          # written by the GitHub build (the run number)
@@ -23,48 +35,153 @@ def frozen():
     return getattr(sys, "frozen", False)
 
 
-def build_of(tag):
-    """'v1.0.12' -> 12"""
+def version_string():
+    """The one version shown everywhere, e.g. 1.7.12 (same as the release name)."""
+    return f"{__version__}.{BUILD}" if BUILD else f"{__version__} (dev)"
+
+
+def parse(tag):
+    """'v1.7.12' -> (1, 7, 12)"""
+    out = []
+    for part in str(tag).lstrip("vV").split("."):
+        try:
+            out.append(int(part))
+        except ValueError:
+            out.append(0)
+    return tuple((out + [0, 0, 0])[:3])
+
+
+def current():
+    return parse(f"{__version__}.{BUILD}")
+
+
+class UpdateError(Exception):
+    """Carries a plain-words reason for the user and the technical detail."""
+    def __init__(self, reason, detail=""):
+        super().__init__(reason)
+        self.reason, self.detail = reason, detail
+
+
+def explain(e):
+    """Turn a connection error into words a student understands."""
+    text = str(e)
+    reason = getattr(e, "reason", None)
+    if isinstance(e, urllib.error.HTTPError):
+        if e.code == 403 and "rate limit" in text.lower():
+            return "GitHub is busy (too many checks from this network). Please try again in an hour."
+        if e.code in (403, 407):
+            return "The connection was blocked by a proxy, firewall or antivirus."
+        if e.code == 404:
+            return "No released version was found on GitHub."
+        return f"GitHub replied with an error ({e.code}). Please try again later."
+    if isinstance(e, ssl.SSLError) or isinstance(reason, ssl.SSLError) or "CERTIFICATE" in text.upper():
+        return ("Security certificate problem: this PC (or its antivirus) does not trust GitHub's certificate. "
+                "Updating Windows, or opening github.com once in Edge, usually fixes it.")
+    if isinstance(e, (socket.timeout, TimeoutError)) or isinstance(reason, (socket.timeout, TimeoutError)) \
+            or "timed out" in text.lower():
+        return "The connection timed out. The internet may be slow; please try again."
+    if isinstance(reason, socket.gaierror) or "getaddrinfo" in text or "Name or service" in text:
+        return "No internet connection (github.com could not be found)."
+    if "refused" in text.lower() or "proxy" in text.lower():
+        return "The connection was refused, possibly by a proxy or firewall."
+    return "Could not connect to GitHub."
+
+
+def _contexts():
+    yield "system", None                       # Windows certificate store
     try:
-        return int(str(tag).lstrip("v").split(".")[-1])
-    except ValueError:
-        return 0
+        import certifi
+        yield "bundled", ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        pass
 
 
-def latest(timeout=8):
-    """Return dict(tag, build, notes, url, size) of the newest release, or None if offline."""
-    req = urllib.request.Request(API, headers={"Accept": "application/vnd.github+json", "User-Agent": "ISRO-SkillTest"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        d = json.load(r)
+def _powershell(args, timeout):
+    if sys.platform != "win32":
+        raise UpdateError("PowerShell is only available on Windows")
+    cmd = ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command",
+           "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; "
+           "$ProgressPreference = 'SilentlyContinue'; " + args]
+    r = subprocess.run(cmd, capture_output=True, timeout=timeout, creationflags=0x08000000)
+    if r.returncode != 0:
+        raise UpdateError("PowerShell download failed", r.stderr.decode(errors="ignore")[-300:])
+    return r.stdout
+
+
+def _get_json(url, timeout):
+    errors = []
+    for name, ctx in _contexts():
+        try:
+            req = urllib.request.Request(url, headers=HEADERS)
+            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
+                return json.load(r)
+        except urllib.error.HTTPError as e:
+            raise UpdateError(explain(e), f"{name}: {e}")          # GitHub answered: retrying will not help
+        except Exception as e:
+            errors.append((name, e))
+    try:
+        out = _powershell(f"(Invoke-WebRequest -UseBasicParsing -Headers @{{'User-Agent'='ISRO-SkillTest'}} "
+                          f"-Uri '{url}').Content", timeout + 10)
+        return json.loads(out.decode("utf-8-sig"))
+    except Exception as e:
+        errors.append(("powershell", e))
+    first = errors[0][1] if errors else Exception("unknown")
+    raise UpdateError(explain(first), "; ".join(f"{n}: {type(e).__name__}: {e}" for n, e in errors)[:600])
+
+
+def latest(timeout=20):
+    """Return dict(tag, notes, url, size, page) of the newest release. Raises UpdateError."""
+    d = _get_json(API, timeout)
     asset = next((a for a in d.get("assets", []) if a["name"].lower().endswith(".exe")), None)
     if not asset:
         return None
-    return {"tag": d.get("tag_name", ""), "build": build_of(d.get("tag_name")), "notes": d.get("body") or "",
-            "url": asset["browser_download_url"], "size": asset.get("size", 0), "page": d.get("html_url", PAGE)}
+    return {"tag": d.get("tag_name", ""), "notes": d.get("body") or "", "url": asset["browser_download_url"],
+            "size": asset.get("size", 0), "page": d.get("html_url", PAGE)}
 
 
 def update_available(info):
-    return bool(info) and info["build"] > BUILD and BUILD > 0
+    return bool(info) and BUILD > 0 and parse(info["tag"]) > current()
 
 
 def download(info, progress=None):
     """Download the new exe next to the running one. progress(done_bytes, total_bytes)."""
     target = Path(sys.executable).with_name("ISRO_SkillTest_update.exe")
-    req = urllib.request.Request(info["url"], headers={"User-Agent": "ISRO-SkillTest"})
-    with urllib.request.urlopen(req, timeout=30) as r, open(target, "wb") as f:
-        total = int(r.headers.get("Content-Length") or info.get("size") or 0)
-        done = 0
-        while True:
-            chunk = r.read(256 * 1024)
-            if not chunk:
-                break
-            f.write(chunk)
-            done += len(chunk)
+    total = int(info.get("size") or 0)
+    errors = []
+    for name, ctx in _contexts():
+        try:
+            req = urllib.request.Request(info["url"], headers={"User-Agent": "ISRO-SkillTest"})
+            with urllib.request.urlopen(req, timeout=60, context=ctx) as r, open(target, "wb") as f:
+                total = int(r.headers.get("Content-Length") or total or 0)
+                done = 0
+                while True:
+                    chunk = r.read(256 * 1024)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    done += len(chunk)
+                    if progress:
+                        progress(done, total)
+            break
+        except PermissionError as e:
+            raise UpdateError("The app's folder is write-protected (for example Program Files). Move "
+                              "ISRO_SkillTest.exe to Desktop or Downloads and try again.", str(e))
+        except Exception as e:
+            errors.append((name, e))
+    else:
+        try:
             if progress:
-                progress(done, total)
-    if total and target.stat().st_size != total:
+                progress(0, total)
+            _powershell(f"Invoke-WebRequest -UseBasicParsing -Uri '{info['url']}' -OutFile '{target}'", 600)
+        except Exception as e:
+            errors.append(("powershell", e))
+            first = errors[0][1]
+            raise UpdateError(explain(first), "; ".join(f"{n}: {e}" for n, e in errors)[:600])
+    if not target.exists() or (total and target.stat().st_size != total):
         target.unlink(missing_ok=True)
-        raise IOError("The download was incomplete. Please try again.")
+        raise UpdateError("The download was incomplete. Please try again.")
+    if progress:
+        progress(total or 1, total or 1)
     return target
 
 

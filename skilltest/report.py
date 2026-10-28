@@ -149,6 +149,8 @@ def build_typing(rec, path):
                f"<div class='muted'>errors {s['error_pct']:g}%</div></div>")
     out.append(f"<div class='card'><div class='muted'>Mistakes</div><div class='big'>{s['mistakes']:g}</div>"
                f"<div class='muted'>{s['full_mistakes']} full · {s['half_mistakes']} half</div></div></div>")
+    if rec.get("rule"):
+        out.append(f"<p><b>{esc(rec['rule'])}</b></p>")
     out.append("<h2>Your typing, checked</h2><div class='txt'>")
     for k, o, t in rec["items"]:
         if k == "ok":

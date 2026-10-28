@@ -1,9 +1,15 @@
 name: Build Windows app
 
+# Every push to main is built and tested. A release (which students get through "Update now") is made only
+# when the change note contains [release], or when the workflow is started by hand ("Run workflow").
 on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      notes:
+        description: "What's new (shown to students)"
+        required: false
 
 permissions:
   contents: write
@@ -33,7 +39,7 @@ jobs:
       - name: Build ISRO_SkillTest.exe
         run: >
           pyinstaller --noconfirm --onefile --windowed --name ISRO_SkillTest
-          --collect-data docx --collect-data pptx --collect-data customtkinter
+          --collect-data docx --collect-data pptx --collect-data customtkinter --collect-data certifi
           --hidden-import win32com.client --hidden-import pythoncom --hidden-import msoffcrypto
           ISRO_SkillTest.py
 
@@ -49,21 +55,37 @@ jobs:
           name: ISRO_SkillTest
           path: dist/ISRO_SkillTest.exe
 
-      - name: Write release notes
+      - name: Decide whether to release
+        id: rel
         shell: pwsh
         env:
-          MSG: ${{ github.event.head_commit.message }}
+          MANUAL_NOTES: ${{ github.event.inputs.notes }}
         run: |
-          $lines = $env:MSG -split "`n" | Where-Object { $_ -notmatch '^(Co-Authored-By|Claude-Session):' }
+          $msg = git log -1 --pretty=%B
+          $release = ("${{ github.event_name }}" -eq "workflow_dispatch") -or ($msg -match '\[release\]')
+          $v = (Select-String -Path skilltest/__init__.py -Pattern '__version__ = "(.+)"').Matches[0].Groups[1].Value
+          "release=$($release.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          "version=$v.${{ github.run_number }}" >> $env:GITHUB_OUTPUT
+          if ($env:MANUAL_NOTES) { $msg = $env:MANUAL_NOTES }
+          Set-Content -Path msg.txt -Value $msg -Encoding utf8
+          Write-Host "Release: $release  Version: $v.${{ github.run_number }}"
+
+      - name: Write release notes
+        if: steps.rel.outputs.release == 'true'
+        shell: pwsh
+        run: |
+          $lines = Get-Content msg.txt | Where-Object { $_ -notmatch '^(Co-Authored-By|Claude-Session):' } |
+                   ForEach-Object { $_ -replace '\s*\[release\]', '' }
           $notes = ($lines -join "`n").Trim()
           $notes += "`n`n---`nDownload **ISRO_SkillTest.exe** below and double-click it, or press **Update now** inside the app.`n"
           $notes += "Windows may show 'Windows protected your PC' the first time: click More info > Run anyway."
           Set-Content -Path notes.md -Value $notes -Encoding utf8
 
       - name: Publish release
+        if: steps.rel.outputs.release == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.${{ github.run_number }}
-          name: ISRO Skill Test Practice v1.0.${{ github.run_number }}
+          tag_name: v${{ steps.rel.outputs.version }}
+          name: ISRO Skill Test Practice v${{ steps.rel.outputs.version }}
           body_path: notes.md
           files: dist/ISRO_SkillTest.exe

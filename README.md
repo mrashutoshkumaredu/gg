@@ -22,6 +22,17 @@ The app checks for a new version when it opens. If there is one, the Home screen
 closes the app, replaces the file and opens the new version. Scores and settings are kept.
 You can also press **Check for updates** at the bottom of the Home screen.
 
+If the check fails, the message says why in plain words (for example a security certificate problem, a proxy or
+antivirus block, or a time-out) and offers to open the download page. The app tries three ways of reaching GitHub
+before giving up.
+
+The version shown in the window title (for example v1.7.12) is the same as the release name.
+
+**For the developer:** every push to `main` is built and tested, but a release (which students receive through
+Update now) is made only when the commit message contains `[release]`, or when the workflow is run by hand from
+the Actions tab ("Run workflow", with optional notes). The version is `__version__` in `skilltest/__init__.py`
+plus the build number.
+
 ## What is inside
 
 - **5 full mock tests**: each one has 2 Word, 2 Excel and 2 PowerPoint tasks, 100 marks in total, with a 75-minute timer.
@@ -30,6 +41,8 @@ You can also press **Check for updates** at the bottom of the Home screen.
   Data Validation, Slide Master, gradient fills and so on). You can check them instantly and see the model answer.
 - **Shortcut key quiz**: 20 random questions from about 80 Word, Excel and PowerPoint shortcuts.
 - **Typing test**: 8 office-style passages (or your own), 2/5/10/15-minute or untimed, Backspace on/off.
+  In a timed test only the part you reached is checked; in an untimed test the whole passage is checked,
+  so words not typed count as missing.
   Gives gross and net speed (WPM), accuracy, error %, and full and half mistakes, with every mistake marked.
   Paste is blocked in the typing box.
 - **Compare two texts** (dictation check): paste or load (.txt/.docx) the paragraph that was read out and
@@ -91,6 +104,12 @@ numbers**, so answers cannot simply be remembered. Use **Retake (new numbers)** 
 - **Instructions in Hindi** opens the question paper in English and Hindi in the browser.
 - **Students**: add several students on the Home screen; each has separate folders, scores and weak areas.
 - **Export all results to Excel** (My Progress screen) gives a sheet of every attempt by every student, plus weak topics.
+
+## Your saved results
+
+Results and settings are kept in `%APPDATA%\ISRO_SkillTest`. Every save is written to a temporary file first and
+the previous good copy is kept as a `.bak`, so a power cut cannot wipe them. If a file is ever damaged, the app
+restores it from the backup, keeps the damaged copy aside, and tells you.
 
 ## Run from source (optional)
 

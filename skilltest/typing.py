@@ -179,6 +179,16 @@ def compare_partial(original, typed, seconds=0, count_case=True, count_punct=Tru
     return compare(" ".join(ow[:best_end]), typed, seconds, count_case, count_punct)
 
 
+def untyped_tail(result):
+    """How many words at the end of the passage were never reached."""
+    n = 0
+    for it in reversed(result.items):
+        if it.kind != "missing":
+            break
+        n += 1
+    return n
+
+
 KIND_LABEL = {"wrong": "Wrong / misspelt word", "missing": "Missing word", "extra": "Extra word",
               "case": "Capital letter", "punct": "Punctuation", "spacing": "Spacing (joined/split)"}
 

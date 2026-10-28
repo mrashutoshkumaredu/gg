@@ -27,6 +27,7 @@ from .session import (DEFAULT_STUDENT, current_student, default_root, delete_att
 from .shortcuts import make_quiz
 from . import typing as TY
 from . import updater
+from . import session as session_mod
 import threading
 
 APP_TITLE = "ISRO Skill Test Practice"
@@ -134,7 +135,7 @@ class App(ctk.CTk):
     def __init__(self):
         ctk.set_appearance_mode("light")
         super().__init__(fg_color=BG)
-        self.title(f"{APP_TITLE}  v{__version__}" + (f" (build {updater.BUILD})" if updater.BUILD else ""))
+        self.title(f"{APP_TITLE}  v{updater.version_string()}")
         scale = max(ctk.ScalingTracker.get_window_scaling(self), 0.1)      # Windows display scaling, e.g. 125%
         sw, sh = int(self.winfo_screenwidth() / scale), int(self.winfo_screenheight() / scale)
         self.geometry(f"{min(1180, sw - 40)}x{min(780, sh - 90)}")
@@ -164,29 +165,33 @@ class App(ctk.CTk):
         updater.cleanup_leftovers()
         self.show_home()
         self.after(1500, lambda: self.check_updates(quiet=True))
+        if session_mod.DATA_WARNINGS:
+            self.after(900, lambda: messagebox.showwarning(APP_TITLE, "\n\n".join(dict.fromkeys(session_mod.DATA_WARNINGS))))
 
     # ---------- updates
     def check_updates(self, quiet=False):
         def work():
             try:
                 self._upd = ("ok", updater.latest())
+            except updater.UpdateError as e:
+                self._upd = ("error", (e.reason, e.detail))
             except Exception as e:
-                self._upd = ("error", str(e))
+                self._upd = ("error", ("Could not connect to GitHub.", f"{type(e).__name__}: {e}"))
         self._upd = None
         threading.Thread(target=work, daemon=True).start()
         self._wait_updates(quiet, 0)
 
     def _wait_updates(self, quiet, n):
         if self._upd is None:
-            if n < 60:
+            if n < 400:                                   # up to 100 s: three ways of connecting are tried
                 self.after(250, lambda: self._wait_updates(quiet, n + 1))
             elif not quiet:
-                messagebox.showinfo(APP_TITLE, "Could not reach GitHub. Check the internet connection and try again.")
+                self.update_failed("The connection timed out. The internet may be slow; please try again.", "")
             return
         kind, info = self._upd
         if kind == "error":
             if not quiet:
-                messagebox.showinfo(APP_TITLE, "Could not check for updates (no internet?).\n\n" + info[:200])
+                self.update_failed(*info)
             return
         if not updater.frozen():
             if not quiet:
@@ -197,7 +202,16 @@ class App(ctk.CTk):
             if isinstance(self.frame, Home):
                 self.frame.show_update(info)
         elif not quiet:
-            messagebox.showinfo(APP_TITLE, f"You have the latest version (build {updater.BUILD}).")
+            messagebox.showinfo(APP_TITLE, f"You have the latest version ({updater.version_string()}).")
+
+    def update_failed(self, reason, detail):
+        """Plain-words reason, the technical detail for reporting, and a way to download by hand."""
+        msg = f"Could not check for updates.\n\n{reason}"
+        if detail:
+            msg += f"\n\nDetails: {detail[:300]}"
+        msg += "\n\nOpen the download page in your browser instead?"
+        if messagebox.askyesno(APP_TITLE, msg, icon="warning"):
+            webbrowser.open(updater.PAGE)
 
     def run_update(self):
         info = self.update_info
@@ -221,8 +235,10 @@ class App(ctk.CTk):
         def work():
             try:
                 state["result"] = ("ok", updater.download(info, lambda d, t: state.update(done=d, total=t or state["total"])))
+            except updater.UpdateError as e:
+                state["result"] = ("error", (e.reason, e.detail))
             except Exception as e:
-                state["result"] = ("error", str(e))
+                state["result"] = ("error", ("The download failed.", f"{type(e).__name__}: {e}"))
         threading.Thread(target=work, daemon=True).start()
 
         def poll():
@@ -233,7 +249,10 @@ class App(ctk.CTk):
             kind, val = state["result"]
             if kind == "error":
                 box.destroy()
-                messagebox.showerror(APP_TITLE, f"Update failed:\n{val}\n\nYou can also download it from:\n{updater.PAGE}")
+                reason, detail = val
+                if messagebox.askyesno(APP_TITLE, f"Update failed.\n\n{reason}\n\nDetails: {detail[:300]}\n\n"
+                                                  "Open the download page in your browser instead?", icon="warning"):
+                    webbrowser.open(updater.PAGE)
                 return
             note.configure(text="Installing… the app will reopen in a few seconds.")
             box.update()
@@ -1923,9 +1942,19 @@ class TypingTestView(ctk.CTkFrame):
             return
         self.done = True
         secs = min(self.elapsed(), self.limit) if self.limit else self.elapsed()
-        res = TY.compare_partial(self.passage, typed, seconds=max(secs, 1))
+        if self.limit:
+            # timed test: only the part of the passage that was reached is checked
+            res = TY.compare_partial(self.passage, typed, seconds=max(secs, 1))
+            rule = "Timed test: only the part of the passage you reached was checked."
+        else:
+            # untimed test: the whole passage counts, so words not typed are missing words
+            res = TY.compare(self.passage, typed, seconds=max(secs, 1))
+            left = TY.untyped_tail(res)
+            rule = ("Untimed test: the whole passage was checked." +
+                    (f" Passage not finished: {left} words not typed (counted as missing)." if left else ""))
         rec = typing_record("Typing test", f"Typing – {self.spec.get('passage', '')}", self.passage, typed, res,
                             {k: v for k, v in self.spec.items()})
+        rec["rule"] = rule
         save_attempt(rec)
         if auto:
             messagebox.showinfo(APP_TITLE, "Time is over. Your typing has been checked.")
@@ -2055,8 +2084,10 @@ class TypingResultView(ctk.CTkFrame):
         vtext, vcol = verdict(acc)
         label(left, f"Accuracy {acc:g}%   ·   Errors {s['error_pct']:g}%", 18 if s.get('net_wpm') is None else 15,
               "bold", vcol).pack(anchor="w", pady=(4, 0))
-        label(left, f"{s['original_words']} words in the passage  ·  {s['typed_words']} words typed", 12,
+        label(left, f"{s['original_words']} words checked  ·  {s['typed_words']} words typed", 12,
               color=MUTED).pack(anchor="w")
+        if rec.get("rule"):
+            label(left, rec["rule"], 12, "bold", "#9A4D00", wraplength=560, justify="left").pack(anchor="w", pady=(2, 0))
         right = ctk.CTkFrame(hero, fg_color="transparent")
         right.pack(side="right", padx=22, pady=14)
         label(right, f"Full mistakes: {s['full_mistakes']}     Half mistakes: {s['half_mistakes']}", 13, "bold").pack(anchor="e")

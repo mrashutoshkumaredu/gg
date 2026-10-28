@@ -18,19 +18,68 @@ def data_dir() -> Path:
     return d
 
 
+# ---------------------------------------------------------------- safe saving
+# A save goes to a temporary file that replaces the real one only when it is complete, and the previous good
+# version is kept as .bak. So a power cut while saving can never wipe the results.
+
+DATA_WARNINGS = []          # shown once by the window, e.g. "history was damaged, restored from backup"
+
+
+def write_json(path: Path, data, indent=1):
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=indent, ensure_ascii=False)
+        f.flush()
+        os.fsync(f.fileno())
+    if path.exists():
+        try:
+            json.loads(path.read_text(encoding="utf-8"))            # only a good file becomes the backup
+            os.replace(path, path.with_name(path.name + ".bak"))
+        except Exception:
+            pass
+    os.replace(tmp, path)
+
+
+def read_json(path: Path, default, what="data"):
+    path = Path(path)
+    bak = path.with_name(path.name + ".bak")
+    if not path.exists() and not bak.exists():
+        return default
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    # the main file is damaged: keep it aside (never overwrite it) and fall back to the backup
+    if path.exists():
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        try:
+            os.replace(path, path.with_name(f"{path.name}.damaged-{stamp}"))
+        except OSError:
+            pass
+    try:
+        data = json.loads(bak.read_text(encoding="utf-8"))
+        DATA_WARNINGS.append(f"The saved {what} file was damaged. It has been restored from the backup "
+                             f"(the most recent change may be missing).")
+        write_json(path, data)
+        return data
+    except Exception:
+        DATA_WARNINGS.append(f"The saved {what} file was damaged and no backup could be read. The damaged file "
+                             f"was kept in {path.parent} so nothing is overwritten.")
+        return default
+
+
 def settings_path():
     return data_dir() / "settings.json"
 
 
 def load_settings():
-    try:
-        return json.loads(settings_path().read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    s = read_json(settings_path(), {}, "settings")
+    return s if isinstance(s, dict) else {}
 
 
 def save_settings(s):
-    settings_path().write_text(json.dumps(s, indent=2), encoding="utf-8")
+    write_json(settings_path(), s, indent=2)
 
 
 def default_root() -> Path:
@@ -126,10 +175,8 @@ def history_path():
 
 
 def load_all_history():
-    try:
-        return json.loads(history_path().read_text(encoding="utf-8"))
-    except Exception:
-        return []
+    h = read_json(history_path(), [], "results history")
+    return h if isinstance(h, list) else []
 
 
 def load_history(student=None):
@@ -142,7 +189,7 @@ def save_attempt(record: dict):
     record.setdefault("student", current_student())
     h = load_all_history()
     h.append(record)
-    history_path().write_text(json.dumps(h, indent=1, ensure_ascii=False), encoding="utf-8")
+    write_json(history_path(), h)
 
 
 def make_record(mode, title, folder, results, seconds_used, seconds_allowed, app_seconds, events, spec=None, attempt=1):
@@ -173,7 +220,7 @@ def delete_attempt(record: dict, delete_files=True):
     """Remove one attempt from history (matched by time and title) and, if asked, its folder."""
     import shutil
     h = [r for r in load_all_history() if not (r.get("when") == record.get("when") and r.get("title") == record.get("title"))]
-    history_path().write_text(json.dumps(h, indent=1, ensure_ascii=False), encoding="utf-8")
+    write_json(history_path(), h)
     folder = record.get("folder")
     if delete_files and folder and Path(folder).exists() and default_root() in Path(folder).parents:
         shutil.rmtree(folder, ignore_errors=True)

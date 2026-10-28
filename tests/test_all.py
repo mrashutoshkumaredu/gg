@@ -68,6 +68,26 @@ def test_variants():
     assert compare(o, t, count_case=False, count_punct=False).summary()["half_mistakes"] == 1      # only spacing left
     assert compare_partial(o, "The Indian Space Research Organisation was set up in", 30).summary()["mistakes"] == 0
     print("typing comparison OK")
+    # untimed typing: words never reached count as missing
+    from skilltest.typing import PASSAGES, untyped_tail
+    txt = PASSAGES[0][1]
+    r = compare(txt, " ".join(txt.split()[:40]), 600)
+    assert untyped_tail(r) == len(txt.split()) - 40 and r.summary()["accuracy"] < 50
+    # safe saving: a damaged file is recovered from the backup and never overwritten
+    import tempfile, glob
+    from skilltest import session as S
+    d = Path(tempfile.mkdtemp())
+    f = d / "h.json"
+    S.write_json(f, [1])
+    S.write_json(f, [1, 2])
+    f.write_text("[1, 2, 3")                          # simulated power cut
+    assert S.read_json(f, []) == [1] and glob.glob(str(f) + ".damaged-*")
+    S.write_json(f, [1, 9])
+    assert S.read_json(f, []) == [1, 9]
+    # versions: old installs (v1.0.x) must see the new releases as newer
+    from skilltest import updater as U
+    assert U.parse("v1.7.12") > U.parse("v1.0.9") and U.parse("v1.7.12") > (1, 7, 11)
+    print("safe saving, untimed typing and versions OK")
 
 
 if __name__ == "__main__":
