@@ -31,6 +31,10 @@ The version shown in the window title (for example v1.7.12) is the same as the r
 Each release also publishes a SHA-256 fingerprint of the .exe. Update now checks the downloaded file against it and
 installs only if they match; otherwise the download is deleted and nothing is changed.
 
+If the swap is interrupted (for example the app closes but does not reopen), the checked new version is kept as
+`ISRO_SkillTest_update.exe` next to the app. The next time you open the app, it finishes the update by itself
+and reopens as the new version.
+
 **For the developer:** every push to `main` is built and tested, but a release (which students receive through
 Update now) is made only when the commit message contains `[release]`, or when the workflow is run by hand from
 the Actions tab ("Run workflow", with optional notes). The version is `__version__` in `skilltest/__init__.py`
