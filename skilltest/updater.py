@@ -185,28 +185,57 @@ def download(info, progress=None):
     return target
 
 
+def clean_env():
+    """Environment for starting the new version as a separate program.
+
+    A one-file .exe unpacks itself into a temporary _MEI folder and deletes it when it closes. Settings that point
+    into that folder must not be passed on, otherwise the new version looks for its files in the old (deleted)
+    folder and fails with "Failed to load Python DLL"."""
+    env = dict(os.environ)
+    temp_dir = getattr(sys, "_MEIPASS", None)
+    for k in list(env):
+        v = env[k]
+        if k.startswith(("_PYI", "_MEI", "PYINSTALLER")) or (temp_dir and temp_dir.lower() in str(v).lower()):
+            del env[k]
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"           # PyInstaller: start fresh, not as a child of this app
+    return env
+
+
 def install_and_restart(new_exe):
     """A running .exe cannot replace itself, so a tiny batch file waits for the app to close,
     swaps the files and starts the new version. The caller must quit the app right after this."""
     old = Path(sys.executable)
     bat = Path(tempfile.gettempdir()) / "isro_skilltest_update.bat"
+    note = ("Update installed. If the app did not open by itself, please open "
+            f"{old.name} again.").replace("'", "")
+    fail = ("The update could not be installed because the file is in use. Please download it from "
+            f"{PAGE}").replace("'", "")
+    popup = "powershell -NoProfile -WindowStyle Hidden -Command \"Add-Type -AssemblyName PresentationFramework;" \
+            "[System.Windows.MessageBox]::Show('{}', 'ISRO Skill Test Practice')\""
     bat.write_text(
         "@echo off\r\n"
         "chcp 65001 >nul\r\n"
         f"set OLD=\"{old}\"\r\n"
         f"set NEW=\"{new_exe}\"\r\n"
         "set N=0\r\n"
+        "ping -n 4 127.0.0.1 >nul\r\n"                # give the old app ~3 s to close and remove its temp folder
         ":wait\r\n"
-        "ping -n 2 127.0.0.1 >nul\r\n"                # wait about 1 second (works without a console)
         "move /y %NEW% %OLD% >nul 2>&1\r\n"
-        "if not errorlevel 1 goto done\r\n"
+        "if not errorlevel 1 goto moved\r\n"
         "set /a N+=1\r\n"
+        "ping -n 2 127.0.0.1 >nul\r\n"
         "if %N% lss 30 goto wait\r\n"
-        ":done\r\n"
+        + popup.format(fail) + "\r\n"
+        "goto end\r\n"
+        ":moved\r\n"
+        "ping -n 2 127.0.0.1 >nul\r\n"
         "start \"\" %OLD%\r\n"
+        "ping -n 16 127.0.0.1 >nul\r\n"               # after ~15 s, check that the new version is running
+        f"tasklist /FI \"IMAGENAME eq {old.name}\" | find /I \"{old.name}\" >nul || " + popup.format(note) + "\r\n"
+        ":end\r\n"
         "del \"%~f0\"\r\n", encoding="utf-8")
     flags = 0x00000008 | 0x00000200 | 0x08000000        # DETACHED, NEW_PROCESS_GROUP, NO_WINDOW
-    subprocess.Popen(["cmd", "/c", str(bat)], creationflags=flags, close_fds=True)
+    subprocess.Popen(["cmd", "/c", str(bat)], creationflags=flags, close_fds=True, env=clean_env())
 
 
 def cleanup_leftovers():
