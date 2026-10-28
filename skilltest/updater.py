@@ -7,6 +7,7 @@ Reaching GitHub is tried three ways, because many PCs block one of them:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import socket
@@ -129,13 +130,43 @@ def _get_json(url, timeout):
     raise UpdateError(explain(first), "; ".join(f"{n}: {type(e).__name__}: {e}" for n, e in errors)[:600])
 
 
+def _get_text(url, timeout):
+    """Small text file (the fingerprint), using the same three ways as _get_json."""
+    errors = []
+    for name, ctx in _contexts():
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "ISRO-SkillTest"})
+            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
+                return r.read(4096).decode("utf-8", "ignore")
+        except urllib.error.HTTPError as e:
+            raise UpdateError(explain(e), f"{name}: {e}")
+        except Exception as e:
+            errors.append((name, e))
+    try:
+        out = _powershell(f"(Invoke-WebRequest -UseBasicParsing -Uri '{url}').Content", timeout + 10)
+        return out.decode("utf-8-sig", "ignore")
+    except Exception as e:
+        errors.append(("powershell", e))
+    raise UpdateError(explain(errors[0][1]), "; ".join(f"{n}: {e}" for n, e in errors)[:600])
+
+
+def sha256_of(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def latest(timeout=20):
     """Return dict(tag, notes, url, size, page) of the newest release. Raises UpdateError."""
     d = _get_json(API, timeout)
     asset = next((a for a in d.get("assets", []) if a["name"].lower().endswith(".exe")), None)
     if not asset:
         return None
+    sha = next((a for a in d.get("assets", []) if a["name"].lower().endswith(".sha256")), None)
     return {"tag": d.get("tag_name", ""), "notes": d.get("body") or "", "url": asset["browser_download_url"],
+            "sha_url": sha["browser_download_url"] if sha else None,
             "size": asset.get("size", 0), "page": d.get("html_url", PAGE)}
 
 
@@ -144,7 +175,14 @@ def update_available(info):
 
 
 def download(info, progress=None):
-    """Download the new exe next to the running one. progress(done_bytes, total_bytes)."""
+    """Download the new exe next to the running one and check its fingerprint. progress(done_bytes, total_bytes)."""
+    if not info.get("sha_url"):
+        raise UpdateError("This release has no fingerprint (checksum), so it cannot be checked and will not be "
+                          "installed automatically. Please download it from the download page.")
+    text = _get_text(info["sha_url"], 20).strip()
+    expected = text.split()[0].lower() if text else ""
+    if len(expected) != 64:
+        raise UpdateError("The release fingerprint could not be read, so the update was not installed.")
     target = Path(sys.executable).with_name("ISRO_SkillTest_update.exe")
     total = int(info.get("size") or 0)
     errors = []
@@ -180,6 +218,11 @@ def download(info, progress=None):
     if not target.exists() or (total and target.stat().st_size != total):
         target.unlink(missing_ok=True)
         raise UpdateError("The download was incomplete. Please try again.")
+    got = sha256_of(target)
+    if got != expected:
+        target.unlink(missing_ok=True)
+        raise UpdateError("The downloaded file is not genuine or is damaged (its fingerprint does not match). "
+                          "Nothing was changed.", f"expected {expected[:16]}…, got {got[:16]}…")
     if progress:
         progress(total or 1, total or 1)
     return target

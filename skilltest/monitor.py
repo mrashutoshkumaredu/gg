@@ -379,3 +379,29 @@ def arrange_split(tk_root, app_share=0.42):
     except Exception:
         pass
     return len(office)
+
+
+def clipboard_owner():
+    """Which program put the text on the clipboard: 'word', 'excel', 'ppt', 'other' or None if unknown."""
+    if not IS_WIN:
+        return None
+    try:
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetClipboardOwner()
+        if not hwnd:
+            return None
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        h = _kernel32.OpenProcess(0x1000, False, pid.value)
+        if not h:
+            return None
+        try:
+            size = wintypes.DWORD(1024)
+            buf = ctypes.create_unicode_buffer(1024)
+            if _kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+                return EXE_APP.get(os.path.basename(buf.value).lower(), "other")
+        finally:
+            _kernel32.CloseHandle(h)
+    except Exception:
+        return None
+    return None

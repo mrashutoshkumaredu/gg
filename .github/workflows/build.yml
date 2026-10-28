@@ -15,7 +15,37 @@ permissions:
   contents: write
 
 jobs:
+  # Full marking tests: model answers must get full marks. If any fails, nothing is built or released.
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install LibreOffice (recalculates the Excel formulas of the model answers)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libreoffice-calc > /dev/null
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Every paper can be marked; checks for typing, saving and versions
+        run: python tests/test_all.py
+
+      - name: Mock 1 model answers score 100/100
+        run: python tests/test_mock1.py
+
+      - name: Excel model answers of Mocks 2-5 score full marks (original and retake numbers)
+        run: python tests/test_excel_mocks.py
+
   build:
+    needs: tests
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -50,6 +80,13 @@ jobs:
           Get-Content selftest.txt
           if ($p.ExitCode -ne 0) { exit 1 }
 
+      - name: Fingerprint of the .exe (checked by the app before installing an update)
+        shell: pwsh
+        run: |
+          $h = (Get-FileHash dist\ISRO_SkillTest.exe -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path dist\ISRO_SkillTest.exe.sha256 -Value "$h  ISRO_SkillTest.exe" -Encoding ascii -NoNewline
+          Write-Host "SHA-256: $h"
+
       - uses: actions/upload-artifact@v4
         with:
           name: ISRO_SkillTest
@@ -78,7 +115,9 @@ jobs:
                    ForEach-Object { $_ -replace '\s*\[release\]', '' }
           $notes = ($lines -join "`n").Trim()
           $notes += "`n`n---`nDownload **ISRO_SkillTest.exe** below and double-click it, or press **Update now** inside the app.`n"
-          $notes += "Windows may show 'Windows protected your PC' the first time: click More info > Run anyway."
+          $notes += "Windows may show 'Windows protected your PC' the first time: click More info > Run anyway.`n`n"
+          $sha = Get-Content dist\ISRO_SkillTest.exe.sha256
+          $notes += "SHA-256 fingerprint: ``$sha``"
           Set-Content -Path notes.md -Value $notes -Encoding utf8
 
       - name: Publish release
@@ -88,4 +127,6 @@ jobs:
           tag_name: v${{ steps.rel.outputs.version }}
           name: ISRO Skill Test Practice v${{ steps.rel.outputs.version }}
           body_path: notes.md
-          files: dist/ISRO_SkillTest.exe
+          files: |
+            dist/ISRO_SkillTest.exe
+            dist/ISRO_SkillTest.exe.sha256

@@ -18,7 +18,7 @@ from . import __version__
 from .content import PAPERS, build_paper
 from .content.drills import DRILLS
 from .core import APP_LABEL, all_file_names, grade_task, grade_tasks
-from .monitor import APP_NAME, Monitor, arrange_split
+from .monitor import APP_NAME, Monitor, arrange_split, clipboard_owner
 from .report import build as build_report, build_instructions
 from .session import (DEFAULT_STUDENT, current_student, default_root, delete_attempt, export_results, fmt_secs,
                       load_history, load_settings, make_problem_report, make_record, new_attempt_folder,
@@ -376,8 +376,13 @@ class App(ctk.CTk):
                 return
             f.finish(quiet=True)
         elif isinstance(f, TypingTestView) and not f.done and f.started is not None:
-            if not messagebox.askyesno(APP_TITLE, "A typing test is running.\n\nClose without saving it?"):
+            ans = messagebox.askyesnocancel(APP_TITLE, "A typing test is running.\n\nSave your typing so far and close?\n\n"
+                                                       "Yes = save it (shown as 'not completed')\nNo = close without saving\n"
+                                                       "Cancel = go back to typing")
+            if ans is None:
                 return
+            if ans:
+                f.finish(quiet=True)
         self.destroy()
 
     def switch(self, cls, *args, **kw):
@@ -965,7 +970,8 @@ class TestView(ctk.CTkFrame):
             t.bind(ev, lambda e: "break")
 
     def guard_clipboard(self):
-        """If a passage to be typed has been copied (from anywhere), empty the clipboard."""
+        """If a passage to be typed was copied from outside Office (a browser, a PDF, an old report), empty the
+        clipboard. Text copied inside Word, Excel or PowerPoint is the student's own typing and is left alone."""
         if not self.passages:
             return
         try:
@@ -976,6 +982,8 @@ class TestView(ctk.CTkFrame):
         if len(c) < 40:
             return
         if any(p[i:i + 40] in c for p in self.passages for i in range(0, max(1, len(p) - 40), 40)):
+            if clipboard_owner() in ("word", "excel", "ppt"):
+                return                  # copied inside Word/Excel/PowerPoint: the student's own typed text
             try:
                 self.app.clipboard_clear()
                 self.app.clipboard_append("")
@@ -2092,12 +2100,12 @@ class TypingTestView(ctk.CTkFrame):
             self.timer.configure(text=fmt_secs(el))
         self.after(500, self.tick)
 
-    def finish(self, auto=False):
+    def finish(self, auto=False, quiet=False):
         if self.done:
             return
         typed = self.box.get("1.0", "end").strip()
         if not typed:
-            if not auto:
+            if not auto and not quiet:
                 messagebox.showinfo(APP_TITLE, "Nothing has been typed yet.")
             return
         self.done = True
@@ -2115,7 +2123,16 @@ class TypingTestView(ctk.CTkFrame):
         rec = typing_record("Typing test", f"Typing – {self.spec.get('passage', '')}", self.passage, typed, res,
                             {k: v for k, v in self.spec.items()})
         rec["rule"] = rule
-        save_attempt(rec)
+        if quiet:
+            rec["completed"] = False                 # window closed during the test: kept, but marked
+            rec["rule"] += " Not completed: the window was closed during the test."
+        try:
+            save_attempt(rec)
+        except Exception as e:
+            if not quiet:
+                messagebox.showwarning(APP_TITLE, f"The result could not be saved ({type(e).__name__}: {e}).")
+        if quiet:
+            return
         if auto:
             messagebox.showinfo(APP_TITLE, "Time is over. Your typing has been checked.")
         self.app.switch(TypingResultView, rec)

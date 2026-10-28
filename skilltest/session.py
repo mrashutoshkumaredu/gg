@@ -290,6 +290,16 @@ def weak_topics(history, limit=12):
     return rows[:limit]
 
 
+def _plain_text(ws):
+    """Text such as a student name starting with = + - @ must stay text: Excel must never run it as a formula."""
+    for row in ws.iter_rows(min_row=2):
+        for c in row:
+            if isinstance(c.value, str) and c.value[:1] in ("=", "+", "-", "@", "\t", "\r"):
+                c.value = c.value
+                c.data_type = "s"
+                c.quotePrefix = True
+
+
 def export_results(path, history=None):
     """All students' attempts in one Excel file for the teacher."""
     from openpyxl import Workbook
@@ -314,6 +324,7 @@ def export_results(path, history=None):
                    round(a.get("word", 0) / 60, 1), round(a.get("excel", 0) / 60, 1), round(a.get("ppt", 0) / 60, 1)])
     for c in ws["I"][1:]:
         c.number_format = "0%"
+    _plain_text(ws)
     ws2 = wb.create_sheet("Weak topics")
     ws2.append(["Student", "Program", "Syllabus topic", "Correct", "Times checked", "Success"])
     names = sorted({r.get("student") or DEFAULT_STUDENT for r in history})
@@ -322,6 +333,7 @@ def export_results(path, history=None):
             ws2.append([n, {"word": "Word", "excel": "Excel", "ppt": "PowerPoint"}.get(app, app), topic, ok, cnt, rate])
     for c in ws2["F"][1:]:
         c.number_format = "0%"
+    _plain_text(ws2)
     for sheet in (ws, ws2):
         for c in sheet[1]:
             c.font = Font(bold=True, color="FFFFFF")

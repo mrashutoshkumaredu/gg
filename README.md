@@ -28,10 +28,14 @@ before giving up.
 
 The version shown in the window title (for example v1.7.12) is the same as the release name.
 
+Each release also publishes a SHA-256 fingerprint of the .exe. Update now checks the downloaded file against it and
+installs only if they match; otherwise the download is deleted and nothing is changed.
+
 **For the developer:** every push to `main` is built and tested, but a release (which students receive through
 Update now) is made only when the commit message contains `[release]`, or when the workflow is run by hand from
 the Actions tab ("Run workflow", with optional notes). The version is `__version__` in `skilltest/__init__.py`
-plus the build number.
+plus the build number. Before anything is built, a test stage on GitHub checks that the model answers still get
+full marks (Mock 1 and the Excel tasks of Mocks 2-5, including retake numbers); if any fails, no release is made.
 
 ## What is inside
 
