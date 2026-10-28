@@ -251,7 +251,6 @@ class App(ctk.CTk):
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.update_info = None
         self._upd = None
-        updater.cleanup_leftovers()
         self.show_home()
         self.after(1500, lambda: self.check_updates(quiet=True))
         if session_mod.DATA_WARNINGS:
@@ -2342,5 +2341,7 @@ def practice_drills(app, topic):
 
 
 def main():
+    if updater.finish_pending():          # an earlier update was interrupted: finish it and reopen
+        return
     app = App()
     app.mainloop()

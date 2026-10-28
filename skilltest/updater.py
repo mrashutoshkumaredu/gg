@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import ntpath
 import os
 import socket
 import ssl
@@ -223,6 +224,7 @@ def download(info, progress=None):
         target.unlink(missing_ok=True)
         raise UpdateError("The downloaded file is not genuine or is damaged (its fingerprint does not match). "
                           "Nothing was changed.", f"expected {expected[:16]}…, got {got[:16]}…")
+    remember_pending(target, info.get("tag", ""), got)
     if progress:
         progress(total or 1, total or 1)
     return target
@@ -233,59 +235,135 @@ def clean_env():
 
     A one-file .exe unpacks itself into a temporary _MEI folder and deletes it when it closes. Settings that point
     into that folder must not be passed on, otherwise the new version looks for its files in the old (deleted)
-    folder and fails with "Failed to load Python DLL"."""
+    folder and fails with "Failed to load Python DLL". Only those entries are removed: PATH itself must stay,
+    or Windows cannot find its own tools (ping, tasklist, PowerShell) that the update helper uses."""
     env = dict(os.environ)
-    temp_dir = getattr(sys, "_MEIPASS", None)
+    temp_dir = (getattr(sys, "_MEIPASS", None) or "").rstrip("\\/").lower()
     for k in list(env):
-        v = env[k]
-        if k.startswith(("_PYI", "_MEI", "PYINSTALLER")) or (temp_dir and temp_dir.lower() in str(v).lower()):
+        if k.upper().startswith(("_PYI", "_MEI", "PYINSTALLER")):
             del env[k]
+        elif temp_dir and temp_dir in env[k].lower():
+            keep = [p for p in env[k].split(os.pathsep) if p and temp_dir not in p.lower()]
+            if keep:
+                env[k] = os.pathsep.join(keep)
+            else:
+                del env[k]
     env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"           # PyInstaller: start fresh, not as a child of this app
     return env
+
+
+PENDING = "ISRO_SkillTest_update.exe"     # downloaded and checked, waiting to replace the app
+PENDING_NOTE = "ISRO_SkillTest_update.json"
+
+
+def _tools():
+    """Full paths of the Windows tools the helper uses, so it works even if PATH is missing or damaged."""
+    root = os.environ.get("SYSTEMROOT") or os.environ.get("SystemRoot") or os.environ.get("WINDIR") or r"C:\Windows"
+    s32 = ntpath.join(root, "System32")
+    ps = ntpath.join(s32, "WindowsPowerShell", "v1.0")
+    return {"root": root, "s32": s32, "ps_dir": ps, "ps": ntpath.join(ps, "powershell.exe"),
+            "ping": ntpath.join(s32, "ping.exe"), "tasklist": ntpath.join(s32, "tasklist.exe"),
+            "find": ntpath.join(s32, "find.exe"), "chcp": ntpath.join(s32, "chcp.com"),
+            "cmd": ntpath.join(s32, "cmd.exe")}
+
+
+def helper_script(old, new_exe, pids, note_file=None):
+    """Text of the batch file that waits for the app to close, swaps the files and starts the new version."""
+    t = _tools()
+    name = ntpath.basename(str(old))
+    note = ("Update installed. If the app did not open by itself, please open "
+            f"{name} again.").replace("'", "")
+    fail = ("The update could not be installed because the file is in use. Close the app and open it again, "
+            f"or download the new version from {PAGE}").replace("'", "")
+    popup = f"\"{t['ps']}\" -NoProfile -WindowStyle Hidden -Command \"Add-Type -AssemblyName PresentationFramework;" \
+            "[System.Windows.MessageBox]::Show('{}', 'ISRO Skill Test Practice')\""
+    sleep = f"\"{t['ping']}\" -n {{}} 127.0.0.1 >nul"
+    lines = ["@echo off",
+             f"set \"PATH={t['s32']};{t['root']};{t['ps_dir']};%PATH%\"",
+             f"\"{t['chcp']}\" 65001 >nul",
+             f"set OLD=\"{old}\"",
+             f"set NEW=\"{new_exe}\"",
+             "set N=0",
+             ":closing"]                                  # wait (up to ~60 s) until the old app has really closed
+    lines.append("set BUSY=0")
+    for pid in pids:
+        lines.append(f"\"{t['tasklist']}\" /NH /FI \"PID eq {int(pid)}\" /FI \"IMAGENAME eq {name}\" 2>nul "
+                     f"| \"{t['find']}\" /I \"{name}\" >nul && set BUSY=1")
+    lines += ["if %BUSY%==0 goto closed",
+              "set /a N+=1",
+              sleep.format(2),
+              "if %N% lss 60 goto closing",
+              ":closed",
+              sleep.format(3),                            # let it finish removing its temporary folder
+              "set N=0",
+              ":wait",
+              "move /y %NEW% %OLD% >nul 2>&1",
+              "if not errorlevel 1 goto moved",
+              "set /a N+=1",
+              sleep.format(2),
+              "if %N% lss 30 goto wait",
+              popup.format(fail),
+              "goto end",
+              ":moved"]
+    if note_file:
+        lines.append(f"del \"{note_file}\" >nul 2>&1")
+    lines += [sleep.format(2),
+              "start \"\" %OLD%",
+              sleep.format(16),                           # after ~15 s, check that the new version is running
+              f"\"{t['tasklist']}\" /NH /FI \"IMAGENAME eq {name}\" 2>nul | \"{t['find']}\" /I \"{name}\" >nul "
+              "|| " + popup.format(note),
+              ":end",
+              "del \"%~f0\""]
+    return "\r\n".join(lines) + "\r\n"
 
 
 def install_and_restart(new_exe):
     """A running .exe cannot replace itself, so a tiny batch file waits for the app to close,
     swaps the files and starts the new version. The caller must quit the app right after this."""
     old = Path(sys.executable)
+    pids = [os.getpid()]
+    try:
+        pids.append(os.getppid())          # one-file .exe: the small starter process that holds the file too
+    except (AttributeError, OSError):
+        pass
     bat = Path(tempfile.gettempdir()) / "isro_skilltest_update.bat"
-    note = ("Update installed. If the app did not open by itself, please open "
-            f"{old.name} again.").replace("'", "")
-    fail = ("The update could not be installed because the file is in use. Please download it from "
-            f"{PAGE}").replace("'", "")
-    popup = "powershell -NoProfile -WindowStyle Hidden -Command \"Add-Type -AssemblyName PresentationFramework;" \
-            "[System.Windows.MessageBox]::Show('{}', 'ISRO Skill Test Practice')\""
-    bat.write_text(
-        "@echo off\r\n"
-        "chcp 65001 >nul\r\n"
-        f"set OLD=\"{old}\"\r\n"
-        f"set NEW=\"{new_exe}\"\r\n"
-        "set N=0\r\n"
-        "ping -n 4 127.0.0.1 >nul\r\n"                # give the old app ~3 s to close and remove its temp folder
-        ":wait\r\n"
-        "move /y %NEW% %OLD% >nul 2>&1\r\n"
-        "if not errorlevel 1 goto moved\r\n"
-        "set /a N+=1\r\n"
-        "ping -n 2 127.0.0.1 >nul\r\n"
-        "if %N% lss 30 goto wait\r\n"
-        + popup.format(fail) + "\r\n"
-        "goto end\r\n"
-        ":moved\r\n"
-        "ping -n 2 127.0.0.1 >nul\r\n"
-        "start \"\" %OLD%\r\n"
-        "ping -n 16 127.0.0.1 >nul\r\n"               # after ~15 s, check that the new version is running
-        f"tasklist /FI \"IMAGENAME eq {old.name}\" | find /I \"{old.name}\" >nul || " + popup.format(note) + "\r\n"
-        ":end\r\n"
-        "del \"%~f0\"\r\n", encoding="utf-8")
+    bat.write_text(helper_script(old, new_exe, pids, old.with_name(PENDING_NOTE)), encoding="utf-8")
     flags = 0x00000008 | 0x00000200 | 0x08000000        # DETACHED, NEW_PROCESS_GROUP, NO_WINDOW
-    subprocess.Popen(["cmd", "/c", str(bat)], creationflags=flags, close_fds=True, env=clean_env())
+    subprocess.Popen([_tools()["cmd"], "/c", str(bat)], creationflags=flags, close_fds=True, env=clean_env())
 
 
-def cleanup_leftovers():
-    if frozen():
-        left = Path(sys.executable).with_name("ISRO_SkillTest_update.exe")
+def remember_pending(target, tag, digest):
+    """Note that a checked new version is waiting, so it can still be installed if the swap is interrupted."""
+    try:
+        Path(target).with_name(PENDING_NOTE).write_text(
+            json.dumps({"tag": tag, "sha256": digest, "tries": 0}), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def finish_pending():
+    """Run when the app starts. If an earlier update was downloaded and checked but not swapped in, finish it.
+
+    Returns True when the helper was started; the app must then quit at once (it reopens as the new version).
+    A leftover that is not newer, does not match its fingerprint, or has already failed twice is deleted."""
+    if not frozen():
+        return False
+    exe = Path(sys.executable)
+    new, note = exe.with_name(PENDING), exe.with_name(PENDING_NOTE)
+    try:
+        if new.exists() and note.exists():
+            m = json.loads(note.read_text(encoding="utf-8"))
+            tries = int(m.get("tries", 0))
+            if tries < 2 and parse(m.get("tag", "")) > current() and sha256_of(new) == m.get("sha256"):
+                m["tries"] = tries + 1
+                note.write_text(json.dumps(m), encoding="utf-8")
+                install_and_restart(new)
+                return True
+    except Exception:
+        pass
+    for f in (new, note):
         try:
-            if left.exists():
-                left.unlink()
+            f.unlink(missing_ok=True)
         except OSError:
             pass
+    return False

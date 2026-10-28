@@ -87,6 +87,27 @@ def test_variants():
     # versions: old installs (v1.0.x) must see the new releases as newer
     from skilltest import updater as U
     assert U.parse("v1.7.12") > U.parse("v1.0.9") and U.parse("v1.7.12") > (1, 7, 11)
+    # update helper: PATH keeps everything except the app's temporary folder, tools are called by full path
+    import os
+    old_meipass, old_path = getattr(sys, "_MEIPASS", None), os.environ.get("PATH", "")
+    sys._MEIPASS = "/tmp/_MEI12345"
+    os.environ["PATH"] = os.pathsep.join(["/tmp/_MEI12345", "/usr/bin", "/bin"])
+    try:
+        env = U.clean_env()
+        assert env["PATH"] == os.pathsep.join(["/usr/bin", "/bin"]), env["PATH"]
+    finally:
+        os.environ["PATH"] = old_path
+        if old_meipass is None:
+            del sys._MEIPASS
+        else:
+            sys._MEIPASS = old_meipass
+    bat = U.helper_script(r"C:\Users\A\Desktop\ISRO_SkillTest (1).exe", r"C:\Users\A\Desktop\ISRO_SkillTest_update.exe",
+                          [111, 222], r"C:\Users\A\Desktop\ISRO_SkillTest_update.json")
+    assert "IMAGENAME eq ISRO_SkillTest (1).exe\"" in bat
+    assert "PID eq 111" in bat and "PID eq 222" in bat and "\\System32\\ping.exe" in bat
+    assert "\\System32\\tasklist.exe" in bat and "powershell.exe" in bat
+    assert bat.index(":closed") < bat.index("move /y") < bat.index("start \"\" %OLD%")
+    assert "\nping" not in bat and "\ntasklist" not in bat          # never relies on PATH alone
     # a locked file is never treated as damaged, and saving stops instead of overwriting it
     real = S._read_text
     S._read_text = lambda p: (_ for _ in ()).throw(S.DataBusy("locked"))
