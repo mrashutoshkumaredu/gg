@@ -1965,6 +1965,19 @@ def render_diff(tb, items):
     tb.configure(state="disabled")
 
 
+OWN = "My own passage…"
+CUSTOM = "Custom time…"
+
+
+def parse_minutes(value):
+    """Whole minutes from 1 to 60 typed by the student, or None."""
+    try:
+        m = int(str(value).strip())
+    except ValueError:
+        return None
+    return m if 1 <= m <= 60 else None
+
+
 class TypingSetup(ctk.CTkFrame):
     def __init__(self, parent, app: App):
         super().__init__(parent, fg_color="transparent")
@@ -1979,37 +1992,103 @@ class TypingSetup(ctk.CTkFrame):
         c.pack(fill="both", expand=True, pady=(12, 0))
         form = ctk.CTkFrame(c, fg_color="transparent")
         form.pack(fill="x", padx=20, pady=(18, 6))
-        label(form, "Passage", 13, "bold", MUTED).grid(row=0, column=0, sticky="w")
-        names = [n for n, _ in TY.PASSAGES] + ["My own passage…"]
+        saved = load_settings()
+        self.passage_lbl = label(form, "Passage", 13, "bold", MUTED)
+        names = [n for n, _ in TY.PASSAGES] + [OWN]
         self.passage = option(form, names, 240)
         self.passage.configure(command=self.preview)
-        self.passage.grid(row=1, column=0, sticky="w", padx=(0, 16))
-        label(form, "Time", 13, "bold", MUTED).grid(row=0, column=1, sticky="w")
-        self.minutes = option(form, ["10 minutes", "5 minutes", "2 minutes", "15 minutes", "No time limit"], 150)
-        self.minutes.grid(row=1, column=1, sticky="w", padx=(0, 16))
+        self.time_lbl = label(form, "Time", 13, "bold", MUTED)
+        self.minutes = option(form, ["10 minutes", "5 minutes", "2 minutes", "15 minutes", CUSTOM, "No time limit"], 150)
+        self.minutes.configure(command=self.time_changed)
+        self.custom = ctk.CTkFrame(form, fg_color="transparent")
+        self.custom_min = ctk.CTkEntry(self.custom, width=60, height=36, corner_radius=10, font=F(13), justify="center")
+        self.custom_min.insert(0, str(saved.get("typing_minutes") or 10))
+        self.custom_min.pack(side="left")
+        label(self.custom, "minutes (1–60)", 12, color=MUTED).pack(side="left", padx=(6, 0))
+        self.switches = switches = ctk.CTkFrame(form, fg_color="transparent")
         self.backspace = tk.BooleanVar(value=True)
-        ctk.CTkSwitch(form, text="Allow Backspace", variable=self.backspace, font=F(12),
-                      progress_color=NAVY).grid(row=1, column=2, sticky="w", padx=(0, 16))
+        ctk.CTkSwitch(switches, text="Allow Backspace", variable=self.backspace, font=F(12),
+                      progress_color=NAVY).pack(side="left", padx=(0, 16))
         self.show_passage = tk.BooleanVar(value=True)
-        ctk.CTkSwitch(form, text="Show passage while typing", variable=self.show_passage, font=F(12),
-                      progress_color=NAVY).grid(row=1, column=3, sticky="w")
-        label(c, "Passage text (you can edit 'My own passage'):", 12, color=MUTED).pack(anchor="w", padx=20, pady=(10, 2))
+        ctk.CTkSwitch(switches, text="Show passage while typing", variable=self.show_passage, font=F(12),
+                      progress_color=NAVY).pack(side="left")
+        head = ctk.CTkFrame(c, fg_color="transparent")
+        head.pack(fill="x", padx=20, pady=(10, 2))
+        btn(head, "Load file…", self.load, "ghost", width=110).pack(side="right")
+        self.text_lbl = label(head, "Passage text (you can edit 'My own passage'):", 12, color=MUTED, justify="left", anchor="w")
+        self.text_lbl.pack(side="left", fill="x", expand=True, anchor="w")
+        bar = ctk.CTkFrame(c, fg_color="transparent")
+        bar.pack(side="bottom", fill="x", padx=20, pady=14)
+        self.start_btn = btn(bar, "Start typing test", self.start, "accent", width=170)
+        self.start_btn.pack(side="right")
+        self.note = label(bar, "The timer starts with your first key press. Paste is turned off in the typing box.",
+                          12, color=MUTED, justify="left", anchor="w")
+        self.note.pack(side="left", fill="x", expand=True, anchor="w")
         self.text = textbox(c, size=14)
         self.text.pack(fill="both", expand=True, padx=14)
-        bar = ctk.CTkFrame(c, fg_color="transparent")
-        bar.pack(fill="x", padx=20, pady=14)
-        label(bar, "The timer starts with your first key press. Paste is turned off in the typing box.",
-              12, color=MUTED).pack(side="left")
-        btn(bar, "Start typing test", self.start, "accent", width=170).pack(side="right")
+        self.compact = None
+        self.layout(False)
+        self.bind("<Configure>", lambda e: responsive(self, 700), add="+")
+        if saved.get("typing_custom_time"):
+            self.minutes.set(CUSTOM)
+            self.time_changed(CUSTOM, focus=False)
+        if saved.get("typing_own_text"):
+            self.passage.set(OWN)
         self.preview(self.passage.get())
+
+    def layout(self, compact):
+        """Wide: passage and time side by side. Narrow (split screen): one below the other."""
+        self.compact = compact
+        for w in (self.passage_lbl, self.passage, self.time_lbl, self.minutes, self.switches):
+            w.grid_forget()
+        self.passage_lbl.grid(row=0, column=0, sticky="w")
+        self.passage.grid(row=1, column=0, columnspan=2 if compact else 1, sticky="w", padx=(0, 16))
+        r, c = (2, 0) if compact else (0, 1)
+        self.time_lbl.grid(row=r, column=c, sticky="w", pady=(8, 0) if compact else 0)
+        self.minutes.grid(row=r + 1, column=c, sticky="w", padx=(0, 8))
+        self.custom_pos = dict(row=r + 1, column=c + 1, sticky="w", padx=(0, 16))
+        self.switches.grid(row=r + 2, column=0, columnspan=3, sticky="w", pady=(10, 0))
+        if compact:
+            self.switches.winfo_children()[0].pack_configure(side="top", anchor="w", pady=(0, 6))
+            self.switches.winfo_children()[1].pack_configure(side="top", anchor="w")
+        else:
+            self.switches.winfo_children()[0].pack_configure(side="left", anchor="center", pady=0)
+            self.switches.winfo_children()[1].pack_configure(side="left", anchor="center")
+        self.text_lbl.configure(wraplength=200 if compact else 0)
+        self.note.configure(wraplength=180 if compact else 0)
+        self.time_changed(self.minutes.get(), focus=False)
+
+    def time_changed(self, value, focus=True):
+        if value == CUSTOM:
+            self.custom.grid(**self.custom_pos)
+            if focus:
+                self.custom_min.focus_set()
+        else:
+            self.custom.grid_forget()
 
     def preview(self, name):
         self.text.configure(state="normal")
         self.text.delete("1.0", "end")
-        if name != "My own passage…":
+        if name != OWN:
             self.text.insert("1.0", TY.passage_text(name))
         else:
+            self.text.insert("1.0", load_settings().get("typing_own_text") or "")
             self.text.focus_set()
+
+    def load(self):
+        path = filedialog.askopenfilename(title="Open your passage", filetypes=[("Text or Word", "*.txt *.docx"),
+                                                                                ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            text = read_text_file(path)
+        except Exception as e:
+            messagebox.showerror(APP_TITLE, f"Could not read the file.\n{e}")
+            return
+        self.passage.set(OWN)
+        self.text.configure(state="normal")
+        self.text.delete("1.0", "end")
+        self.text.insert("1.0", text.strip())
 
     def start(self):
         text = " ".join(self.text.get("1.0", "end").split())
@@ -2017,9 +2096,27 @@ class TypingSetup(ctk.CTkFrame):
             messagebox.showinfo(APP_TITLE, "Please enter a passage of at least 10 words.")
             return
         m = self.minutes.get()
-        minutes = 0 if m.startswith("No") else int(m.split()[0])
+        if m == CUSTOM:
+            minutes = parse_minutes(self.custom_min.get())
+            if minutes is None:
+                messagebox.showinfo(APP_TITLE, "Please type the time as whole minutes, from 1 to 60 (for example 7).")
+                self.custom_min.focus_set()
+                return
+        else:
+            minutes = 0 if m.startswith("No") else int(m.split()[0])
         name = self.passage.get()
-        self.app.start({"kind": "typing", "passage": name if name != "My own passage…" else "My own passage",
+        settings = load_settings()
+        if settings or not session_mod.settings_path().exists():      # never overwrite settings that could not be read
+            settings["typing_custom_time"] = m == CUSTOM
+            if m == CUSTOM:
+                settings["typing_minutes"] = minutes
+            if name == OWN:
+                settings["typing_own_text"] = text
+            try:
+                save_settings(settings)
+            except Exception:
+                pass
+        self.app.start({"kind": "typing", "passage": name if name != OWN else "My own passage",
                         "text": text, "minutes": minutes, "backspace": self.backspace.get(),
                         "show": self.show_passage.get()})
 

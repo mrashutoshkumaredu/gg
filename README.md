@@ -48,7 +48,9 @@ full marks (Mock 1 and the Excel tasks of Mocks 2-5, including retake numbers); 
 - **45 topic drills**: short tasks on one syllabus topic each (Mail Merge, Track Changes, VLOOKUP, Subtotal,
   Data Validation, Slide Master, gradient fills and so on). You can check them instantly and see the model answer.
 - **Shortcut key quiz**: 20 random questions from about 80 Word, Excel and PowerPoint shortcuts.
-- **Typing test**: 8 office-style passages (or your own), 2/5/10/15-minute or untimed, Backspace on/off.
+- **Typing test**: 8 office-style passages or your own (typed, pasted or loaded from a .txt/.docx file),
+  2/5/10/15 minutes, a custom time (1 to 60 minutes) or untimed, Backspace on/off. Your own passage and
+  custom time are remembered for next time.
   In a timed test only the part you reached is checked; in an untimed test the whole passage is checked,
   so words not typed count as missing.
   Gives gross and net speed (WPM), accuracy, error %, and full and half mistakes, with every mistake marked.
