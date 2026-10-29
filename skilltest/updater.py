@@ -25,7 +25,7 @@ from . import __version__
 REPO = "mrashutoshkumaredu/gg"
 API = f"https://api.github.com/repos/{REPO}/releases/latest"
 PAGE = f"https://github.com/{REPO}/releases/latest"
-HEADERS = {"Accept": "application/vnd.github+json", "User-Agent": "ISRO-SkillTest"}
+HEADERS = {"Accept": "application/vnd.github+json", "User-Agent": "ComputerSkillTest"}
 
 try:
     from ._build import BUILD          # written by the GitHub build (the run number)
@@ -122,7 +122,7 @@ def _get_json(url, timeout):
         except Exception as e:
             errors.append((name, e))
     try:
-        out = _powershell(f"(Invoke-WebRequest -UseBasicParsing -Headers @{{'User-Agent'='ISRO-SkillTest'}} "
+        out = _powershell(f"(Invoke-WebRequest -UseBasicParsing -Headers @{{'User-Agent'='ComputerSkillTest'}} "
                           f"-Uri '{url}').Content", timeout + 10)
         return json.loads(out.decode("utf-8-sig"))
     except Exception as e:
@@ -136,7 +136,7 @@ def _get_text(url, timeout):
     errors = []
     for name, ctx in _contexts():
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "ISRO-SkillTest"})
+            req = urllib.request.Request(url, headers={"User-Agent": "ComputerSkillTest"})
             with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
                 return r.read(4096).decode("utf-8", "ignore")
         except urllib.error.HTTPError as e:
@@ -184,12 +184,12 @@ def download(info, progress=None):
     expected = text.split()[0].lower() if text else ""
     if len(expected) != 64:
         raise UpdateError("The release fingerprint could not be read, so the update was not installed.")
-    target = Path(sys.executable).with_name("ISRO_SkillTest_update.exe")
+    target = Path(sys.executable).with_name(PENDING)
     total = int(info.get("size") or 0)
     errors = []
     for name, ctx in _contexts():
         try:
-            req = urllib.request.Request(info["url"], headers={"User-Agent": "ISRO-SkillTest"})
+            req = urllib.request.Request(info["url"], headers={"User-Agent": "ComputerSkillTest"})
             with urllib.request.urlopen(req, timeout=60, context=ctx) as r, open(target, "wb") as f:
                 total = int(r.headers.get("Content-Length") or total or 0)
                 done = 0
@@ -204,7 +204,7 @@ def download(info, progress=None):
             break
         except PermissionError as e:
             raise UpdateError("The app's folder is write-protected (for example Program Files). Move "
-                              "ISRO_SkillTest.exe to Desktop or Downloads and try again.", str(e))
+                              f"{Path(sys.executable).name} to Desktop or Downloads and try again.", str(e))
         except Exception as e:
             errors.append((name, e))
     else:
@@ -252,8 +252,9 @@ def clean_env():
     return env
 
 
-PENDING = "ISRO_SkillTest_update.exe"     # downloaded and checked, waiting to replace the app
-PENDING_NOTE = "ISRO_SkillTest_update.json"
+PENDING = "ComputerSkillTest_update.exe"     # downloaded and checked, waiting to replace the app
+PENDING_NOTE = "ComputerSkillTest_update.json"
+OLD_PENDING = ("ISRO_SkillTest_update.exe", "ISRO_SkillTest_update.json")     # left by versions before the new name
 
 
 def _tools():
@@ -276,7 +277,7 @@ def helper_script(old, new_exe, pids, note_file=None):
     fail = ("The update could not be installed because the file is in use. Close the app and open it again, "
             f"or download the new version from {PAGE}").replace("'", "")
     popup = f"\"{t['ps']}\" -NoProfile -WindowStyle Hidden -Command \"Add-Type -AssemblyName PresentationFramework;" \
-            "[System.Windows.MessageBox]::Show('{}', 'ISRO Skill Test Practice')\""
+            "[System.Windows.MessageBox]::Show('{}', 'Computer Skill Test')\""
     sleep = f"\"{t['ping']}\" -n {{}} 127.0.0.1 >nul"
     lines = ["@echo off",
              f"set \"PATH={t['s32']};{t['root']};{t['ps_dir']};%PATH%\"",
@@ -326,7 +327,7 @@ def install_and_restart(new_exe):
         pids.append(os.getppid())          # one-file .exe: the small starter process that holds the file too
     except (AttributeError, OSError):
         pass
-    bat = Path(tempfile.gettempdir()) / "isro_skilltest_update.bat"
+    bat = Path(tempfile.gettempdir()) / "computerskilltest_update.bat"
     bat.write_text(helper_script(old, new_exe, pids, old.with_name(PENDING_NOTE)), encoding="utf-8")
     flags = 0x00000008 | 0x00000200 | 0x08000000        # DETACHED, NEW_PROCESS_GROUP, NO_WINDOW
     subprocess.Popen([_tools()["cmd"], "/c", str(bat)], creationflags=flags, close_fds=True, env=clean_env())
@@ -361,7 +362,7 @@ def finish_pending():
                 return True
     except Exception:
         pass
-    for f in (new, note):
+    for f in (new, note) + tuple(exe.with_name(n) for n in OLD_PENDING):
         try:
             f.unlink(missing_ok=True)
         except OSError:

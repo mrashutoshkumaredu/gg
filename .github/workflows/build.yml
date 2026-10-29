@@ -66,31 +66,31 @@ jobs:
         shell: pwsh
         run: '"BUILD = ${{ github.run_number }}" | Out-File -Encoding ascii skilltest/_build.py'
 
-      - name: Build ISRO_SkillTest.exe
+      - name: Build ComputerSkillTest.exe
         run: >
-          pyinstaller --noconfirm --onefile --windowed --name ISRO_SkillTest
+          pyinstaller --noconfirm --onefile --windowed --name ComputerSkillTest
           --collect-data docx --collect-data pptx --collect-data customtkinter --collect-data certifi
           --hidden-import win32com.client --hidden-import pythoncom --hidden-import msoffcrypto
-          ISRO_SkillTest.py
+          ComputerSkillTest.py
 
       - name: Self-test the .exe
         shell: pwsh
         run: |
-          $p = Start-Process -FilePath dist\ISRO_SkillTest.exe -ArgumentList '--selftest','selftest.txt' -Wait -PassThru
+          $p = Start-Process -FilePath dist\ComputerSkillTest.exe -ArgumentList '--selftest','selftest.txt' -Wait -PassThru
           Get-Content selftest.txt
           if ($p.ExitCode -ne 0) { exit 1 }
 
       - name: Fingerprint of the .exe (checked by the app before installing an update)
         shell: pwsh
         run: |
-          $h = (Get-FileHash dist\ISRO_SkillTest.exe -Algorithm SHA256).Hash.ToLower()
-          Set-Content -Path dist\ISRO_SkillTest.exe.sha256 -Value "$h  ISRO_SkillTest.exe" -Encoding ascii -NoNewline
+          $h = (Get-FileHash dist\ComputerSkillTest.exe -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path dist\ComputerSkillTest.exe.sha256 -Value "$h  ComputerSkillTest.exe" -Encoding ascii -NoNewline
           Write-Host "SHA-256: $h"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ISRO_SkillTest
-          path: dist/ISRO_SkillTest.exe
+          name: ComputerSkillTest
+          path: dist/ComputerSkillTest.exe
 
       - name: Decide whether to release
         id: rel
@@ -114,9 +114,9 @@ jobs:
           $lines = Get-Content msg.txt | Where-Object { $_ -notmatch '^(Co-Authored-By|Claude-Session):' } |
                    ForEach-Object { $_ -replace '\s*\[release\]', '' }
           $notes = ($lines -join "`n").Trim()
-          $notes += "`n`n---`nDownload **ISRO_SkillTest.exe** below and double-click it, or press **Update now** inside the app.`n"
+          $notes += "`n`n---`nDownload **ComputerSkillTest.exe** below and double-click it, or press **Update now** inside the app.`n"
           $notes += "Windows may show 'Windows protected your PC' the first time: click More info > Run anyway.`n`n"
-          $sha = Get-Content dist\ISRO_SkillTest.exe.sha256
+          $sha = Get-Content dist\ComputerSkillTest.exe.sha256
           $notes += "SHA-256 fingerprint: ``$sha``"
           Set-Content -Path notes.md -Value $notes -Encoding utf8
 
@@ -125,8 +125,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.rel.outputs.version }}
-          name: ISRO Skill Test Practice v${{ steps.rel.outputs.version }}
+          name: Computer Skill Test v${{ steps.rel.outputs.version }}
           body_path: notes.md
           files: |
-            dist/ISRO_SkillTest.exe
-            dist/ISRO_SkillTest.exe.sha256
+            dist/ComputerSkillTest.exe
+            dist/ComputerSkillTest.exe.sha256

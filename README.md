@@ -1,4 +1,4 @@
-# ISRO Skill Test Practice
+# Computer Skill Test
 
 A Windows practice app for the computer skill test for Assistant / UDC / JPA / Stenographer posts
 (MS Word 35 marks, MS Excel 35 marks, MS PowerPoint 30 marks, 75 minutes).
@@ -9,7 +9,8 @@ along with a step-by-step model answer for each task.
 
 ## Download
 
-Go to **Releases** (right side of the GitHub page), open the latest release and download `ISRO_SkillTest.exe`.
+Go to **Releases** (right side of the GitHub page), open the latest release and download `ComputerSkillTest.exe`.
+(Older versions were called `ISRO_SkillTest.exe`; Update now still works for them and keeps their file name.)
 Double-click it. Nothing needs to be installed. MS Office (2010 or newer) must be on the computer.
 
 If Windows shows "Windows protected your PC", click **More info > Run anyway**. This happens because the
@@ -17,10 +18,10 @@ file is not signed.
 
 ## Updates
 
-The app checks for a new version when it opens. If there is one, the Home screen shows
-**New version … is available** with **What's new** and **Update now**. Update now downloads the new .exe,
+The app checks for a new version when it opens. If there is one, an orange **Update ●** button appears in the
+top bar and the Home screen shows **New version … is available** with **What's new** and **Update now**. Update now downloads the new .exe,
 closes the app, replaces the file and opens the new version. Scores and settings are kept.
-You can also press **Check for updates** at the bottom of the Home screen.
+You can also press **Check for updates** in **Settings**.
 
 If the check fails, the message says why in plain words (for example a security certificate problem, a proxy or
 antivirus block, or a time-out) and offers to open the download page. The app tries three ways of reaching GitHub
@@ -32,7 +33,7 @@ Each release also publishes a SHA-256 fingerprint of the .exe. Update now checks
 installs only if they match; otherwise the download is deleted and nothing is changed.
 
 If the swap is interrupted (for example the app closes but does not reopen), the checked new version is kept as
-`ISRO_SkillTest_update.exe` next to the app. The next time you open the app, it finishes the update by itself
+`ComputerSkillTest_update.exe` next to the app. The next time you open the app, it finishes the update by itself
 and reopens as the new version.
 
 **For the developer:** every push to `main` is built and tested, but a release (which students receive through
@@ -64,7 +65,7 @@ full marks (Mock 1 and the Excel tasks of Mocks 2-5, including retake numbers); 
 
 ## How a test works
 
-1. Choose a test. A folder is made for it in `Documents\ISRO_SkillTest`, for example
+1. Choose a test. A folder is made for it in `Documents\ISRO_SkillTest` (the folder keeps its old name, so earlier work stays in one place), for example
    `Mock Test 1 - Full Test\Attempt 1 (26-10-2026 18.15)`, and opened for you. Any starter files and a
    `Pictures` folder are put in it.
 2. Read each task in the app and do it in Office. Save each file in the test folder with the exact name asked.
@@ -77,15 +78,28 @@ full marks (Mock 1 and the Excel tasks of Mocks 2-5, including retake numbers); 
 5. After you submit, the app checks your files and shows the result. A printable report
    (`Result_Report.html`) with the full activity timeline is saved in the test folder.
 
+## The screens
+
+- **Home**: your tests taken, best and last score, and a **Next step** (for example "Practise Creating Tables").
+  The full mock test is the large card; section practice, drills, the shortcut quiz and typing are below.
+- **Test screen**: each task shows "Not saved yet" or "✔ Saved", so you can see what is left. The activity line
+  shows time in Word, Excel and PowerPoint and the last thing that happened; **Show log** opens the full list.
+- **Result**: checks are grouped under each task (tasks with full marks are folded), with **Show only mistakes**.
+  Printable report, test folder and Report wrong marking are under **More**.
+- **Topic Drills**: a search box, and your best score next to every drill you have done.
+- **Typing**: while you type, the words you have done are greyed out in the passage and the next word is marked.
+- **Settings**: student, strict exam mode, test folder, and updates.
+
 ## Any screen size
 
-The top bar (Home, My progress, Typing, Updates, Help) is always visible. Every screen can be scrolled with the
+The top bar (Home, My progress, Typing, Settings, Help) is always visible, and the page you are on is highlighted. Every screen can be scrolled with the
 mouse wheel or touchpad when the window is too small to show everything, so all options can be reached on any
 laptop. The window can be made as small as half the screen, and every screen rearranges itself when it is narrow.
-During a test, press **Split screen**: open Office windows move to the left and the app moves to the right, on top.
+During a test, press **View**: **Split screen** moves open Office windows to the left and the app to the right, on top;
+**Keep this window on top** is there too.
 Windows key + Left/Right arrow (Windows Snap) also works.
 
-**Mini bar**: keeps Office full screen. A small always-on-top box shows the timer, the current task's steps,
+**Mini bar** (also under **View**): keeps Office full screen. A small always-on-top box shows the timer, the current task's steps,
 ◀ ▶ to change task, Check and Submit. Drag it anywhere, resize it, press ◐ to make it see-through,
 ▴ to fold it down to just the timer, and ⤢ to go back to the full window.
 
@@ -108,7 +122,7 @@ numbers**, so answers cannot simply be remembered. Use **Retake (new numbers)** 
 - Part marks: for example, if 3 of 4 bullets are right, or 8 of 10 formulas, you get that share of the marks.
 - Typing: each mistake costs 10% of that passage's marks, and the result lists every wrong, missing or extra word.
 - Copying the passages to be typed is blocked, both in the app and on the clipboard.
-- **Strict exam mode** (switch on the Home screen) hides "Check this task" and model answers until you submit.
+- **Strict exam mode** (in **Settings**) hides "Check this task" and model answers until you submit.
 - **Report wrong marking** on the result screen makes a zip of the files and result to send to the developer.
 
 ## Learning and teachers
@@ -116,7 +130,7 @@ numbers**, so answers cannot simply be remembered. Use **Retake (new numbers)** 
 - **Practise →** next to each weak area starts the matching drills.
 - **Score trend** chart on the My Progress screen.
 - **Instructions in Hindi** opens the question paper in English and Hindi in the browser.
-- **Students**: add several students on the Home screen; each has separate folders, scores and weak areas.
+- **Students**: add several students in **Settings**; each has separate folders, scores and weak areas.
 - **Export all results to Excel** (My Progress screen) gives a sheet of every attempt by every student, plus weak topics.
 
 ## Your saved results
@@ -132,7 +146,7 @@ Live activity only lists files in the test folder (and new unsaved documents), n
 
 ```
 pip install -r requirements.txt
-python ISRO_SkillTest.py
+python ComputerSkillTest.py
 ```
 
 Tests: `python tests/test_all.py`, `python tests/test_mock1.py` and `python tests/test_excel_mocks.py`

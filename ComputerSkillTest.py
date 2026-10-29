@@ -1,6 +1,6 @@
 """Entry point used by PyInstaller to build the Windows .exe.
 
-ISRO_SkillTest.exe --selftest out.txt   checks that every paper can be prepared and marked (used by the build).
+ComputerSkillTest.exe --selftest out.txt   checks that every paper can be prepared and marked (used by the build).
 """
 import sys
 
